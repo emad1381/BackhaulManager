@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.1
+Version: 2.4.2
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -156,30 +156,41 @@ def get_server_info(srv):
     else:
         ip = host
         cmd = (
-            "hostname; echo '---'; "
-            "uname -r; echo '---'; "
-            "cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo ''; echo '---'; "
-            "free -h 2>/dev/null | awk '/^Mem:/{print $3 \" used / \" $2}' || echo ''; echo '---'; "
-            "df -h / 2>/dev/null | awk 'NR==2{print $3 \" used / \" $2}' || echo ''; echo '---'; "
-            "uptime -p 2>/dev/null || uptime | awk -F', ' '{print $1}' || echo ''; echo '---'; "
-            "(systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)); echo '---'; "
-            f"({BINARY} --version 2>/dev/null | head -1 || echo 'not installed')"
+            "echo -n 'HOST:'; hostname; "
+            "echo -n 'KERNEL:'; uname -r; "
+            "echo -n 'LOAD:'; cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo ''; "
+            "echo -n 'MEM:'; free -h 2>/dev/null | awk '/^Mem:/{print $3 \" used / \" $2}' || echo ''; "
+            "echo -n 'DISK:'; df -h / 2>/dev/null | awk 'NR==2{print $3 \" used / \" $2}' || echo ''; "
+            "echo -n 'UPTIME:'; uptime -p 2>/dev/null || uptime | awk -F', ' '{print $1}' || echo ''; "
+            "echo -n 'ROLE:'; systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown); "
+            f"echo -n 'VER:'; {BINARY} --version 2>/dev/null | head -1 || echo 'not installed'"
         )
         out, _ = run_ssh(host, user, key, sudo_cmd(user, cmd), password=password, port=port)
-        parts = [p.strip() for p in out.split("---")]
-        if len(parts) >= 8:
-            hostname_out = parts[0]
-            kernel = parts[1]
-            load = parts[2]
-            mem = parts[3]
-            disk = parts[4]
-            uptime_out = parts[5]
-            role_actual = parts[6]
-            version = parts[7]
+        
+        hostname_out, kernel, load, mem, disk, uptime_out, role_actual, version = "", "", "", "", "", "", "unknown", "not installed"
+        ssh_ok = False
+        
+        if out:
+            for line in out.splitlines():
+                line = line.strip()
+                if line.startswith("HOST:"):
+                    hostname_out = line[5:].strip()
+                elif line.startswith("KERNEL:"):
+                    kernel = line[7:].strip()
+                elif line.startswith("LOAD:"):
+                    load = line[5:].strip()
+                elif line.startswith("MEM:"):
+                    mem = line[4:].strip()
+                elif line.startswith("DISK:"):
+                    disk = line[5:].strip()
+                elif line.startswith("UPTIME:"):
+                    uptime_out = line[7:].strip()
+                elif line.startswith("ROLE:"):
+                    role_actual = line[5:].strip()
+                elif line.startswith("VER:"):
+                    version = line[4:].strip()
+            
             ssh_ok = (hostname_out != "" and "Permission denied" not in hostname_out and "Connection refused" not in hostname_out and "No route to host" not in hostname_out)
-        else:
-            hostname_out, kernel, load, mem, disk, uptime_out, role_actual, version = "", "", "", "", "", "", "unknown", "not installed"
-            ssh_ok = False
 
     return {
         "id": srv.get("id", ""),
@@ -1262,7 +1273,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.1</div>
+<div class="topbar-badge">Premium v2.4.2</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1913,7 +1924,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.1")
+    print("  BackhaulManager Web Panel v2.4.2")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
