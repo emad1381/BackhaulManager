@@ -1262,7 +1262,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.0</div>
+<div class="topbar-badge">Premium v2.4.1</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
