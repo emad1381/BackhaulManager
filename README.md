@@ -30,13 +30,13 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 **One-line install & run (copy & paste on your server):**
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/emad1381/BackhaulManager/main/backhaul-manager.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh)
 ```
 
 Or with `wget`:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/emad1381/BackhaulManager/main/backhaul-manager.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh)
 ```
 
 **Manual run:**
