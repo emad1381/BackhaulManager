@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.3
+Version: 2.4.4
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -558,6 +558,19 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
         if not self.check_auth():
             self.send_json({"error": "unauthorized"}, 401)
+            return
+
+        if path == "/api/debug_ssh":
+            query = urllib.parse.parse_qs(parsed.query)
+            srv_id = query.get("server_id", [""])[0]
+            cmd = query.get("cmd", [""])[0]
+            data_servers = load_servers()
+            srv = next((s for s in data_servers.get("servers", []) if s.get("id") == srv_id), None)
+            if not srv:
+                self.send_json({"error": "server not found"}, 404)
+                return
+            out, code = remote_exec(srv, cmd)
+            self.send_json({"stdout": out, "exit_code": code})
             return
 
         if path == "/api/settings/get":
@@ -1277,7 +1290,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.3</div>
+<div class="topbar-badge">Premium v2.4.4</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1928,7 +1941,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.3")
+    print("  BackhaulManager Web Panel v2.4.4")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
