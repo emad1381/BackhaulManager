@@ -27,6 +27,20 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 
 ## Quick Start
 
+**One-line install & run (copy & paste on your server):**
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/emad1381/BackhaulManager/main/backhaul-manager.sh)
+```
+
+Or with `wget`:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/emad1381/BackhaulManager/main/backhaul-manager.sh)
+```
+
+**Manual run:**
+
 ```bash
 chmod +x backhaul-manager.sh
 sudo ./backhaul-manager.sh
