@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.3.3
+#  Version : 1.4.0
 #  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
@@ -171,7 +171,7 @@ LOGO
 ask_server_role() {
     clear
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.3 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.4.0 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
     # Try auto-detect first
@@ -221,7 +221,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.3 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.4.0 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2083,6 +2083,8 @@ menu_webpanel() {
     echo -e "  ${WHITE}[2]${NC} ${RED}Stop${NC}  Web Panel"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Start${NC} on boot (systemd service)"
     echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel files"
+    echo -e "  ${WHITE}[5]${NC} ${LCYAN}Restart${NC} Web Panel"
+    echo -e "  ${WHITE}[6]${NC} ${RED}Uninstall${NC} Web Panel"
     echo -e "  ${WHITE}[0]${NC} Back to Main Menu"
     separator
     prompt "Choice:"; read -r wp_choice
@@ -2091,24 +2093,29 @@ menu_webpanel() {
         1)
             if [[ -n "$running_pid" ]]; then
                 warn "Web Panel is already running."
-                press_enter; return
+                press_enter; continue
             fi
 
             # Check python3
             if ! command -v python3 &>/dev/null; then
                 warn "python3 not found. Please install python3 first."
-                press_enter; return
+                press_enter; continue
             fi
 
             # Check if webpanel files exist
             if [[ ! -f "$WEBPANEL_SCRIPT" ]]; then
                 warn "Web Panel files not found. Please install first (option 4)."
-                press_enter; return
+                press_enter; continue
+            fi
+
+            # Install sshpass if not installed (needed for password auth)
+            if ! command -v sshpass &>/dev/null; then
+                info "Installing sshpass for SSH password authentication..."
+                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
             fi
 
             # Kill any process using port 54321
             info "Checking port $WEBPANEL_PORT..."
-            # Method 1: kill by port using ss + kill
             local port_pid
             port_pid=$(ss -tlnp 2>/dev/null | grep ":${WEBPANEL_PORT} " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
             if [[ -n "$port_pid" ]]; then
@@ -2116,13 +2123,10 @@ menu_webpanel() {
                 kill -9 "$port_pid" 2>/dev/null
                 sleep 2
             fi
-            # Method 2: kill by port using fuser
             fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
             sleep 2
-            # Method 3: kill any python server.py processes
             pkill -9 -f "python3.*server\.py" 2>/dev/null
             sleep 3
-            # Verify port is free
             if ss -tlnp 2>/dev/null | grep -q ":${WEBPANEL_PORT} "; then
                 warn "Port $WEBPANEL_PORT still in use. Waiting 5 more seconds..."
                 sleep 5
@@ -2161,6 +2165,12 @@ menu_webpanel() {
             press_enter
             ;;
         3)
+            # Install sshpass if not installed
+            if ! command -v sshpass &>/dev/null; then
+                info "Installing sshpass for SSH password authentication..."
+                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
+            fi
+            
             info "Creating systemd service for Web Panel..."
             cat > "$SERVICE_DIR/backhaul-webpanel.service" <<SERVICE
 [Unit]
@@ -2200,6 +2210,12 @@ SERVICE
             info "Installing Web Panel files..."
             mkdir -p "$WEBPANEL_DIR"
 
+            # Install sshpass if not installed
+            if ! command -v sshpass &>/dev/null; then
+                info "Installing sshpass for SSH password authentication..."
+                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
+            fi
+
             # Download from GitHub
             local raw_url="https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
             info "Downloading from: $raw_url"
@@ -2221,6 +2237,79 @@ SERVICE
             else
                 warn "Download failed. Please check your internet connection."
             fi
+            press_enter
+            ;;
+        5)
+            # Restart Web Panel
+            info "Restarting Web Panel..."
+            
+            # Kill existing processes
+            pkill -9 -f "python3.*server\.py" 2>/dev/null
+            fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+            sleep 3
+            
+            # Check if systemd service exists
+            if systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
+                systemctl restart backhaul-webpanel
+                sleep 2
+                if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                    success "Web Panel restarted via systemd!"
+                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                else
+                    warn "Failed to restart via systemd. Check: journalctl -u backhaul-webpanel"
+                fi
+            else
+                # Start manually
+                if [[ ! -f "$WEBPANEL_SCRIPT" ]]; then
+                    warn "Web Panel files not found. Please install first (option 4)."
+                    press_enter; continue
+                fi
+                
+                # Install sshpass if not installed
+                if ! command -v sshpass &>/dev/null; then
+                    info "Installing sshpass for SSH password authentication..."
+                    apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
+                fi
+                
+                nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
+                sleep 4
+                
+                if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
+                    success "Web Panel restarted!"
+                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                else
+                    warn "Failed to restart Web Panel. Check logs:"
+                    tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null
+                fi
+            fi
+            press_enter
+            ;;
+        6)
+            # Uninstall Web Panel
+            echo -e "\n  ${LRED}${BOLD}WARNING:${NC} This will completely remove the Web Panel"
+            prompt "Type 'yes' to confirm uninstall:"; read -r confirm
+            [[ "$confirm" != "yes" ]] && { info "Aborted."; press_enter; continue; }
+            
+            # Stop running processes
+            pkill -9 -f "python3.*server\.py" 2>/dev/null
+            fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+            
+            # Remove systemd service
+            if [[ -f "$SERVICE_DIR/backhaul-webpanel.service" ]]; then
+                systemctl stop backhaul-webpanel 2>/dev/null
+                systemctl disable backhaul-webpanel 2>/dev/null
+                rm -f "$SERVICE_DIR/backhaul-webpanel.service"
+                systemctl daemon-reload
+                info "Systemd service removed."
+            fi
+            
+            # Remove webpanel files
+            if [[ -d "$WEBPANEL_DIR" ]]; then
+                rm -rf "$WEBPANEL_DIR"
+                info "Web Panel files removed."
+            fi
+            
+            success "Web Panel uninstalled completely!"
             press_enter
             ;;
         0) return ;;
