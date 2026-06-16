@@ -156,13 +156,13 @@ def get_server_info(srv):
     else:
         ip = host
         cmd = (
-            "hostname && echo '---' && "
-            "uname -r && echo '---' && "
-            "cut -d' ' -f1-3 /proc/loadavg && echo '---' && "
-            "free -h | awk '/^Mem:/{print $3 \" used / \" $2}' && echo '---' && "
-            "df -h / | awk 'NR==2{print $3 \" used / \" $2}' && echo '---' && "
-            "uptime -p && echo '---' && "
-            "(systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)) && echo '---' && "
+            "hostname; echo '---'; "
+            "uname -r; echo '---'; "
+            "cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo ''; echo '---'; "
+            "free -h 2>/dev/null | awk '/^Mem:/{print $3 \" used / \" $2}' || echo ''; echo '---'; "
+            "df -h / 2>/dev/null | awk 'NR==2{print $3 \" used / \" $2}' || echo ''; echo '---'; "
+            "uptime -p 2>/dev/null || uptime | awk -F', ' '{print $1}' || echo ''; echo '---'; "
+            "(systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)); echo '---'; "
             f"({BINARY} --version 2>/dev/null | head -1 || echo 'not installed')"
         )
         out, _ = run_ssh(host, user, key, sudo_cmd(user, cmd), password=password, port=port)
