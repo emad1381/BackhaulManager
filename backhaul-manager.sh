@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.5.2
+#  Version : 1.5.3
 #  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
@@ -248,7 +248,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.5.2 by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.5.3 by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -308,7 +308,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.5.2 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.5.3 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
