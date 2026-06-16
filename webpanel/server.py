@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.1.0
+Version: 2.2.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -512,7 +512,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 sessions[sid] = {"user": username, "time": time.time()}
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Strict")
+                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Lax")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": True}).encode())
             else:
@@ -769,7 +769,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0a0e1
 </head>
 <body>
 <div class="login-container">
-<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.1.0</p></div>
+<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.2.0</p></div>
 <div class="error-msg" id="error"></div>
 <form onsubmit="doLogin(event)">
 <div class="form-group"><label>Username</label><input type="text" id="username" placeholder="admin" autocomplete="username" required></div>
