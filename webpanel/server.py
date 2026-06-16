@@ -29,6 +29,21 @@ CRON_CONFIG_DIR = f"{INSTALL_DIR}/cron"
 CRON_MARKER = "# backhaul-auto-restart"
 PANEL_DIR = f"{INSTALL_DIR}/webpanel"
 SERVERS_FILE = f"{PANEL_DIR}/servers.json"
+SETTINGS_FILE = f"{PANEL_DIR}/settings.json"
+
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE) as f:
+                return json.load(f)
+        except:
+            pass
+    return {"admin_user": ADMIN_USER, "admin_pass": ADMIN_PASS}
+
+def save_settings(data):
+    os.makedirs(PANEL_DIR, exist_ok=True)
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
 
 sessions = {}
 
@@ -42,19 +57,19 @@ def run_cmd(cmd, timeout=30):
         return str(e), 1
 
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
-    ssh_opts = f"-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p {port}"
+    ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-p", str(port)]
     if password:
         sshpass_check, _ = run_cmd("which sshpass")
         if not sshpass_check:
             return "sshpass not installed. Run: apt install sshpass", 1
-        ssh_opts += " -o PubkeyAuthentication=no"
-        full_cmd = ["sshpass", "-p", password, "ssh", ssh_opts, f"{user}@{host}", cmd]
+        ssh_opts.extend(["-o", "PubkeyAuthentication=no"])
+        full_cmd = ["sshpass", "-p", password, "ssh"] + ssh_opts + [f"{user}@{host}", cmd]
     else:
-        ssh_opts += " -o BatchMode=yes"
+        ssh_opts.extend(["-o", "BatchMode=yes"])
         if key_file:
-            full_cmd = ["ssh", "-i", key_file, ssh_opts, f"{user}@{host}", cmd]
+            full_cmd = ["ssh", "-i", key_file] + ssh_opts + [f"{user}@{host}", cmd]
         else:
-            full_cmd = ["ssh", ssh_opts, f"{user}@{host}", cmd]
+            full_cmd = ["ssh"] + ssh_opts + [f"{user}@{host}", cmd]
     try:
         r = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip(), r.returncode
@@ -461,6 +476,11 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": "unauthorized"}, 401)
             return
 
+        if path == "/api/settings/get":
+            settings = load_settings()
+            self.send_json({"username": settings.get("admin_user", ADMIN_USER)})
+            return
+
         if path == "/api/servers":
             data = load_servers()
             result = []
@@ -539,7 +559,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/auth/login":
             username = data.get("username", "")
             password = data.get("password", "")
-            if username == ADMIN_USER and password == ADMIN_PASS:
+            settings = load_settings()
+            if username == settings.get("admin_user", ADMIN_USER) and password == settings.get("admin_pass", ADMIN_PASS):
                 sid = secrets.token_hex(32)
                 sessions[sid] = {"user": username, "time": time.time()}
                 self.send_response(200)
@@ -566,6 +587,19 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
         if not self.check_auth():
             self.send_json({"error": "unauthorized"}, 401)
+            return
+
+        if path == "/api/settings/update":
+            new_user = data.get("username", "")
+            new_pass = data.get("password", "")
+            if new_user and new_pass:
+                settings = load_settings()
+                settings["admin_user"] = new_user
+                settings["admin_pass"] = new_pass
+                save_settings(settings)
+                self.send_json({"success": True})
+            else:
+                self.send_json({"success": False, "error": "Username and password required"}, 400)
             return
 
         if path == "/api/server/add":
@@ -781,169 +815,223 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
 
 def get_login_page():
-    return '''<!DOCTYPE html>
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BackhaulManager - Login</title>
+<title>BackhaulManager - Premium Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0a0e1a;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#e0e0e0}
-.login-container{background:linear-gradient(135deg,#111827 0%,#1a1f35 50%,#0f172a 100%);border:1px solid rgba(99,179,237,0.2);border-radius:20px;padding:48px 40px;width:420px;box-shadow:0 25px 60px rgba(0,0,0,0.5),0 0 40px rgba(59,130,246,0.1)}
-.logo{text-align:center;margin-bottom:32px}
-.logo h1{font-size:32px;font-weight:800;background:linear-gradient(135deg,#3b82f6,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-0.5px}
-.logo p{color:#64748b;font-size:13px;margin-top:6px}
-.form-group{margin-bottom:20px}
-.form-group label{display:block;font-size:13px;color:#94a3b8;margin-bottom:8px;font-weight:500}
-.form-group input{width:100%;padding:14px 16px;background:#0f172a;border:1px solid #1e293b;border-radius:12px;color:#e2e8f0;font-size:15px;transition:all 0.3s;outline:none}
-.form-group input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15)}
-.form-group input::placeholder{color:#475569}
-.btn-login{width:100%;padding:14px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none;border-radius:12px;color:white;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s;margin-top:8px}
-.btn-login:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(59,130,246,0.35)}
-.error-msg{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px;color:#f87171;font-size:13px;text-align:center;display:none;margin-bottom:16px}
-.footer{text-align:center;margin-top:24px;color:#475569;font-size:12px}
+* { margin:0; padding:0; box-sizing:border-box; font-family:'Outfit', sans-serif; }
+body { background: #050505; min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #fff; overflow: hidden; }
+.bg-glow { position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, rgba(6,182,212,0.15) 0%, rgba(139,92,246,0.15) 50%, transparent 70%); top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 0; animation: pulse 8s infinite alternate; }
+@keyframes pulse { 0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; } 100% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; } }
+.login-container { position: relative; z-index: 1; background: rgba(20, 20, 20, 0.6); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; padding: 50px 40px; width: 420px; box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1); }
+.logo { text-align: center; margin-bottom: 35px; }
+.logo h1 { font-size: 34px; font-weight: 800; background: linear-gradient(135deg, #fff, #a1a1aa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1px; }
+.logo p { color: #06b6d4; font-size: 13px; font-weight: 600; margin-top: 5px; text-transform: uppercase; letter-spacing: 2px; }
+.form-group { margin-bottom: 22px; }
+.form-group label { display: block; font-size: 13px; color: #a1a1aa; margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.form-group input { width: 100%; padding: 15px 18px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #fff; font-size: 15px; transition: all 0.3s; outline: none; }
+.form-group input:focus { border-color: #06b6d4; box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15); background: rgba(0, 0, 0, 0.8); }
+.form-group input::placeholder { color: #52525b; }
+.btn-login { width: 100%; padding: 15px; background: linear-gradient(135deg, #06b6d4, #3b82f6); border: none; border-radius: 12px; color: white; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s; margin-top: 10px; position: relative; overflow: hidden; }
+.btn-login::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); transition: all 0.5s; }
+.btn-login:hover::before { left: 100%; }
+.btn-login:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(6, 182, 212, 0.4); }
+.error-msg { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 14px; color: #f87171; font-size: 13px; text-align: center; display: none; margin-bottom: 20px; font-weight: 600; }
+.footer { text-align: center; margin-top: 25px; color: #52525b; font-size: 12px; font-weight: 600; letter-spacing: 1px; }
 </style>
 </head>
 <body>
+<div class="bg-glow"></div>
 <div class="login-container">
-<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.3.0</p></div>
+<div class="logo"><h1>BACKHAUL</h1><p>Premium Panel</p></div>
 <div class="error-msg" id="error"></div>
 <form onsubmit="doLogin(event)">
-<div class="form-group"><label>Username</label><input type="text" id="username" placeholder="admin" autocomplete="username" required></div>
-<div class="form-group"><label>Password</label><input type="password" id="password" placeholder="admin" autocomplete="current-password" required></div>
-<button type="submit" class="btn-login">Sign In</button>
+<div class="form-group"><label>Username</label><input type="text" id="username" placeholder="Enter username" autocomplete="username" required></div>
+<div class="form-group"><label>Password</label><input type="password" id="password" placeholder="Enter password" autocomplete="current-password" required></div>
+<button type="submit" class="btn-login">Sign In to Dashboard</button>
 </form>
-<div class="footer">emad1381</div>
+<div class="footer">EMAD1381</div>
 </div>
 <script>
-async function doLogin(e){e.preventDefault();const u=document.getElementById("username").value;const p=document.getElementById("password").value;const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success){window.location.href="/"}else{const er=document.getElementById("error");er.textContent=d.error||"Invalid credentials";er.style.display="block"}}
+async function doLogin(e){e.preventDefault();const u=document.getElementById("username").value;const p=document.getElementById("password").value;const btn=document.querySelector(".btn-login");btn.textContent="Authenticating...";btn.style.opacity="0.8";const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success){window.location.href="/"}else{const er=document.getElementById("error");er.textContent=d.error||"Invalid credentials";er.style.display="block";btn.textContent="Sign In to Dashboard";btn.style.opacity="1";}}
 </script>
 </body>
-</html>'''
+</html>"""
 
 
 def get_main_page():
-    return '''<!DOCTYPE html>
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BackhaulManager - Panel</title>
+<title>BackhaulManager - Premium Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;800&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0e1a;--card:#111827;--card2:#1a2035;--border:#1e293b;--blue:#3b82f6;--cyan:#06b6d4;--green:#10b981;--yellow:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b}
-body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.topbar{background:linear-gradient(90deg,#0f172a,#1a1f35);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
-.topbar-left{display:flex;align-items:center;gap:14px}
-.topbar-logo{font-size:22px;font-weight:800;background:linear-gradient(135deg,var(--blue),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.topbar-badge{background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--purple)}
-.topbar-right{display:flex;align-items:center;gap:16px}
-.btn-logout{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:7px 14px;color:var(--red);font-size:12px;cursor:pointer;transition:all 0.2s}
-.btn-logout:hover{background:rgba(239,68,68,0.2)}
-.container{max-width:1400px;margin:0 auto;padding:24px}
-.tabs{display:flex;gap:4px;padding:4px;background:var(--card);border-radius:12px;margin-bottom:24px;border:1px solid var(--border)}
-.tab{padding:12px 24px;border-radius:10px;cursor:pointer;font-size:14px;font-weight:500;color:var(--text3);transition:all 0.2s;border:none;background:transparent}
-.tab:hover{color:var(--text2)}
-.tab.active{background:var(--blue);color:white}
-.tab-content{display:none}.tab-content.active{display:block}
-.server-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;margin-bottom:24px}
-.server-card{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;padding:22px;transition:all 0.3s;position:relative;overflow:hidden}
-.server-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
-.server-card.iran::before{background:linear-gradient(90deg,var(--green),var(--cyan))}
-.server-card.kharej::before{background:linear-gradient(90deg,var(--blue),var(--purple))}
-.server-card:hover{border-color:rgba(59,130,246,0.3);transform:translateY(-2px)}
-.server-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.server-card-title{display:flex;align-items:center;gap:10px}
-.server-card-title h3{font-size:16px;font-weight:600}
-.role-badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase}
-.role-badge.iran{background:rgba(16,185,129,0.15);color:var(--green);border:1px solid rgba(16,185,129,0.3)}
-.role-badge.kharej{background:rgba(59,130,246,0.15);color:var(--blue);border:1px solid rgba(59,130,246,0.3)}
-.ssh-status{font-size:11px;display:flex;align-items:center;gap:4px}
-.ssh-status .dot{width:8px;height:8px;border-radius:50%}
-.ssh-status .dot.ok{background:var(--green)}
-.ssh-status .dot.err{background:var(--red)}
-.server-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.server-stat{background:var(--bg);border-radius:10px;padding:10px 12px}
-.server-stat .label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px}
-.server-stat .value{font-size:14px;font-weight:600;margin-top:2px}
-.server-card-actions{display:flex;gap:6px;margin-top:14px}
-.server-card-actions button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;transition:all 0.2s}
-.server-card-actions button:hover{border-color:var(--blue);color:var(--blue)}
-.server-card-actions button.del{color:var(--red);border-color:rgba(239,68,68,0.3)}
-.section{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;margin-bottom:24px;overflow:hidden}
-.section-header{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-.section-header h2{font-size:16px;font-weight:600}
-.section-body{padding:20px 22px}
-.tunnel-list{display:flex;flex-direction:column;gap:10px}
-.tunnel-item{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;transition:all 0.2s}
-.tunnel-item:hover{border-color:rgba(59,130,246,0.3)}
-.tunnel-left{display:flex;align-items:center;gap:14px}
-.tunnel-status{width:10px;height:10px;border-radius:50%}
-.tunnel-status.running{background:var(--green);box-shadow:0 0 8px rgba(16,185,129,0.5)}
-.tunnel-status.stopped{background:var(--red);box-shadow:0 0 8px rgba(239,68,68,0.5)}
-.tunnel-name{font-weight:600;font-size:14px}
-.tunnel-meta{font-size:12px;color:var(--text3);margin-top:3px;display:flex;gap:12px;flex-wrap:wrap}
-.tunnel-server-tag{background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.2);border-radius:6px;padding:1px 8px;font-size:10px;color:var(--purple)}
-.cron-badge{background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);border-radius:6px;padding:2px 8px;font-size:10px;color:var(--purple)}
-.tunnel-actions{display:flex;gap:5px}
-.tunnel-actions button{padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;transition:all 0.2s}
-.tunnel-actions button:hover{border-color:var(--blue);color:var(--blue)}
-.tunnel-actions button.start{border-color:rgba(16,185,129,0.3);color:var(--green)}.tunnel-actions button.start:hover{background:rgba(16,185,129,0.1)}
-.tunnel-actions button.stop{border-color:rgba(245,158,11,0.3);color:var(--yellow)}.tunnel-actions button.stop:hover{background:rgba(245,158,11,0.1)}
-.tunnel-actions button.restart{border-color:rgba(59,130,246,0.3);color:var(--blue)}.tunnel-actions button.restart:hover{background:rgba(59,130,246,0.1)}
-.tunnel-actions button.delete{border-color:rgba(239,68,68,0.3);color:var(--red)}.tunnel-actions button.delete:hover{background:rgba(239,68,68,0.1)}
-.empty{text-align:center;padding:40px;color:var(--text3)}.empty .icon{font-size:40px;margin-bottom:12px}
-.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:200;display:none;align-items:center;justify-content:center}
-.modal-overlay.show{display:flex}
-.modal{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;width:600px;max-height:85vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,0.5)}
-.modal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-.modal-header h3{font-size:17px;font-weight:600}
-.modal-close{background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:4px 8px;border-radius:6px}
-.modal-close:hover{background:rgba(239,68,68,0.1);color:var(--red)}
-.modal-body{padding:24px}
-.modal-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.form-group{margin-bottom:16px}
-.form-group label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:500}
-.form-group input,.form-group select,.form-group textarea{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;transition:all 0.2s;font-family:inherit}
-.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
-.form-group textarea{min-height:180px;resize:vertical;font-family:'Cascadia Code','Fira Code',monospace;font-size:13px;line-height:1.5}
-.btn{padding:10px 20px;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all 0.2s;border:none}
-.btn-primary{background:linear-gradient(135deg,var(--blue),#2563eb);color:white}.btn-primary:hover{box-shadow:0 6px 20px rgba(59,130,246,0.3)}
-.btn-secondary{background:var(--bg);border:1px solid var(--border);color:var(--text2)}.btn-secondary:hover{border-color:var(--text3)}
-.btn-danger{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--red)}
-.btn-success{background:linear-gradient(135deg,var(--green),#059669);color:white}.btn-success:hover{box-shadow:0 6px 20px rgba(16,185,129,0.3)}
-.logs-box{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;line-height:1.6;max-height:400px;overflow-y:auto;color:var(--text2);white-space:pre-wrap;word-break:break-all}
-.toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 20px;font-size:13px;z-index:300;transform:translateY(100px);opacity:0;transition:all 0.3s;box-shadow:0 10px 30px rgba(0,0,0,0.3)}
-.toast.show{transform:translateY(0);opacity:1}
-.toast.success{border-color:rgba(16,185,129,0.4);color:var(--green)}
-.toast.error{border-color:rgba(239,68,68,0.4);color:var(--red)}
-.toast.info{border-color:rgba(59,130,246,0.4);color:var(--blue)}
-.cron-select{display:flex;gap:8px;flex-wrap:wrap}
-.cron-option{padding:8px 16px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;transition:all 0.2s;background:var(--bg);color:var(--text2)}
-.cron-option:hover{border-color:var(--purple);color:var(--purple)}
-.cron-option.active{background:rgba(139,92,246,0.15);border-color:var(--purple);color:var(--purple)}
-.wizard-steps{display:flex;gap:8px;margin-bottom:20px}
-.wizard-step{flex:1;padding:10px;text-align:center;border-radius:10px;font-size:12px;font-weight:500;color:var(--text3);background:var(--bg);border:1px solid var(--border);transition:all 0.2s}
-.wizard-step.active{color:var(--blue);border-color:var(--blue);background:rgba(59,130,246,0.05)}
-.wizard-step.done{color:var(--green);border-color:var(--green);background:rgba(16,185,129,0.05)}
-.wizard-page{display:none}.wizard-page.active{display:block}
-.connection-line{display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;margin:10px 0}
-.connection-line .line{flex:1;height:2px;background:linear-gradient(90deg,var(--green),var(--blue))}
-.connection-line .arrow{color:var(--cyan);font-size:20px}
-.server-select-card{background:var(--bg);border:2px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all 0.2s;text-align:center}
-.server-select-card:hover{border-color:var(--blue)}
-.server-select-card.selected{border-color:var(--green);background:rgba(16,185,129,0.05)}
-.server-select-card h4{margin-bottom:4px}.server-select-card p{font-size:12px;color:var(--text3)}
-@media(max-width:768px){.server-grid{grid-template-columns:1fr}.form-row{grid-template-columns:1fr}.tunnel-item{flex-direction:column;align-items:flex-start;gap:12px}}
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }
+:root {
+  --bg: #050505;
+  --bg-card: rgba(20, 20, 20, 0.6);
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f4f4f5; --text-muted: #a1a1aa; --text-dark: #52525b;
+  --primary: #06b6d4; --primary-hover: #0891b2;
+  --secondary: #8b5cf6;
+  --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+}
+body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+/* Glassmorphism Background Glows */
+.bg-glow-1 { position: fixed; top: -10%; left: -10%; width: 500px; height: 500px; background: radial-gradient(circle, rgba(6,182,212,0.1) 0%, transparent 70%); z-index: -1; }
+.bg-glow-2 { position: fixed; bottom: -10%; right: -10%; width: 600px; height: 600px; background: radial-gradient(circle, rgba(139,92,246,0.1) 0%, transparent 70%); z-index: -1; }
+
+.topbar { background: rgba(10, 10, 10, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 30px rgba(0,0,0,0.5); }
+.topbar-left { display: flex; align-items: center; gap: 16px; }
+.topbar-logo { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #fff, #a1a1aa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.5px; }
+.topbar-badge { background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.2); border-radius: 20px; padding: 4px 12px; font-size: 11px; color: var(--primary); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.topbar-right { display: flex; align-items: center; gap: 20px; }
+.btn-logout { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); border-radius: 10px; padding: 8px 16px; color: var(--danger); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
+.btn-logout:hover { background: rgba(239,68,68,0.2); box-shadow: 0 0 15px rgba(239,68,68,0.2); }
+
+.container { max-width: 1400px; margin: 0 auto; padding: 32px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 8px; padding: 6px; background: rgba(15,15,15,0.6); backdrop-filter: blur(10px); border-radius: 16px; margin-bottom: 32px; border: 1px solid var(--border); width: fit-content; }
+.tab { padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-muted); transition: all 0.3s; border: none; background: transparent; display: flex; align-items: center; gap: 8px; }
+.tab:hover { color: #fff; background: rgba(255,255,255,0.05); }
+.tab.active { background: linear-gradient(135deg, var(--primary), #3b82f6); color: white; box-shadow: 0 8px 20px rgba(6,182,212,0.3); }
+.tab-content { display: none; animation: fadeIn 0.4s ease forwards; }
+.tab-content.active { display: block; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Cards & Grid */
+.server-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; margin-bottom: 32px; }
+.card { background: var(--bg-card); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 20px; padding: 24px; transition: all 0.3s; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.card:hover { transform: translateY(-4px); border-color: rgba(255,255,255,0.15); box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+
+/* Accent lines for Server Cards */
+.server-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.server-card.iran::before { background: linear-gradient(90deg, var(--success), var(--primary)); }
+.server-card.kharej::before { background: linear-gradient(90deg, var(--primary), var(--secondary)); }
+
+.server-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.server-card-title { display: flex; align-items: center; gap: 12px; }
+.server-card-title h3 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
+.role-badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
+.role-badge.iran { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
+.role-badge.kharej { background: rgba(139,92,246,0.1); color: var(--secondary); border: 1px solid rgba(139,92,246,0.2); }
+.ssh-status { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.ssh-status .dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+.ssh-status .dot.ok { background: var(--success); color: var(--success); }
+.ssh-status .dot.err { background: var(--danger); color: var(--danger); }
+
+.server-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.server-stat { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.03); border-radius: 12px; padding: 12px 16px; transition: all 0.2s; }
+.server-stat:hover { background: rgba(255,255,255,0.03); }
+.server-stat .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+.server-stat .value { font-size: 15px; font-weight: 600; margin-top: 4px; color: #fff; }
+
+.server-card-actions { display: flex; gap: 8px; margin-top: 20px; }
+.btn { padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.3s; border: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-outline { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); }
+.btn-outline:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
+.btn-primary { background: linear-gradient(135deg, var(--primary), #3b82f6); color: white; box-shadow: 0 4px 15px rgba(6,182,212,0.3); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(6,182,212,0.4); }
+.btn-danger { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: var(--danger); }
+.btn-danger:hover { background: rgba(239,68,68,0.2); box-shadow: 0 4px 15px rgba(239,68,68,0.2); }
+.server-card-actions .btn { flex: 1; }
+
+/* Sections & Tunnels */
+.section { background: var(--bg-card); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 24px; margin-bottom: 32px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+.section-header { padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.01); }
+.section-header h2 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
+.section-body { padding: 24px 32px; }
+
+.tunnel-list { display: flex; flex-direction: column; gap: 12px; }
+.tunnel-item { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 16px; padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; transition: all 0.3s; }
+.tunnel-item:hover { border-color: rgba(6,182,212,0.3); background: rgba(6,182,212,0.02); transform: translateX(4px); }
+.tunnel-left { display: flex; align-items: center; gap: 20px; }
+.tunnel-status { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
+.tunnel-status.running { background: var(--success); color: var(--success); }
+.tunnel-status.stopped { background: var(--danger); color: var(--danger); }
+.tunnel-name { font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+.tunnel-server-tag { background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 2px 10px; font-size: 11px; color: #c4b5fd; text-transform: uppercase; letter-spacing: 1px; }
+.cron-badge { background: rgba(6,182,212,0.15); border: 1px solid rgba(6,182,212,0.2); border-radius: 8px; padding: 2px 10px; font-size: 11px; color: #a5f3fc; }
+.tunnel-meta { font-size: 13px; color: var(--text-muted); margin-top: 6px; display: flex; gap: 16px; flex-wrap: wrap; font-weight: 500; }
+.tunnel-meta span { display: flex; align-items: center; gap: 4px; }
+
+.tunnel-actions { display: flex; gap: 8px; }
+.icon-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 14px; }
+.icon-btn:hover { background: rgba(255,255,255,0.1); color: #fff; transform: translateY(-2px); }
+.icon-btn.start { color: var(--success); border-color: rgba(16,185,129,0.2); } .icon-btn.start:hover { background: rgba(16,185,129,0.1); box-shadow: 0 4px 12px rgba(16,185,129,0.2); }
+.icon-btn.stop { color: var(--warning); border-color: rgba(245,158,11,0.2); } .icon-btn.stop:hover { background: rgba(245,158,11,0.1); box-shadow: 0 4px 12px rgba(245,158,11,0.2); }
+.icon-btn.restart { color: var(--primary); border-color: rgba(6,182,212,0.2); } .icon-btn.restart:hover { background: rgba(6,182,212,0.1); box-shadow: 0 4px 12px rgba(6,182,212,0.2); }
+.icon-btn.delete { color: var(--danger); border-color: rgba(239,68,68,0.2); } .icon-btn.delete:hover { background: rgba(239,68,68,0.1); box-shadow: 0 4px 12px rgba(239,68,68,0.2); }
+
+/* Empty States */
+.empty { text-align: center; padding: 60px 20px; color: var(--text-dark); }
+.empty .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+
+/* Modals */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 200; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease; }
+.modal-overlay.show { display: flex; opacity: 1; }
+.modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 24px; width: 600px; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.8); transform: translateY(20px); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.modal-overlay.show .modal { transform: translateY(0); }
+.modal-header { padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; }
+.modal-header h3 { font-size: 20px; font-weight: 600; }
+.modal-close { background: rgba(255,255,255,0.05); border: none; color: var(--text-muted); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 18px; }
+.modal-close:hover { background: rgba(239,68,68,0.1); color: var(--danger); transform: rotate(90deg); }
+.modal-body { padding: 32px; }
+.modal-footer { padding: 24px 32px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: flex-end; gap: 12px; background: rgba(0,0,0,0.2); }
+
+/* Forms */
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+.form-group label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.form-group input, .form-group select, .form-group textarea { width: 100%; padding: 14px 16px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 14px; outline: none; transition: all 0.3s; }
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(6,182,212,0.15); background: rgba(0,0,0,0.6); }
+.form-group textarea { min-height: 200px; resize: vertical; font-family: monospace; font-size: 13px; line-height: 1.6; }
+
+/* Logs */
+.logs-box { background: rgba(0,0,0,0.8); border: 1px solid var(--border); border-radius: 12px; padding: 16px; font-family: monospace; font-size: 13px; line-height: 1.6; max-height: 450px; overflow-y: auto; color: #a1a1aa; white-space: pre-wrap; word-break: break-all; box-shadow: inset 0 4px 20px rgba(0,0,0,0.5); }
+
+/* Toasts */
+.toast { position: fixed; bottom: 32px; right: 32px; background: rgba(20,20,20,0.9); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 16px; padding: 16px 24px; font-size: 14px; font-weight: 500; z-index: 300; transform: translateY(100px); opacity: 0; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 15px 40px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 12px; }
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast::before { content: ''; display: block; width: 10px; height: 10px; border-radius: 50%; }
+.toast.success::before { background: var(--success); box-shadow: 0 0 10px var(--success); }
+.toast.error::before { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+.toast.info::before { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
+
+/* Wizard */
+.wizard-steps { display: flex; gap: 12px; margin-bottom: 32px; }
+.wizard-step { flex: 1; padding: 16px; text-align: center; border-radius: 16px; font-size: 13px; font-weight: 600; color: var(--text-dark); background: rgba(0,0,0,0.3); border: 1px solid var(--border); transition: all 0.3s; position: relative; overflow: hidden; }
+.wizard-step.active { color: #fff; border-color: var(--primary); background: rgba(6,182,212,0.1); box-shadow: 0 0 20px rgba(6,182,212,0.1); }
+.wizard-step.done { color: var(--success); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.05); }
+.wizard-page { display: none; animation: fadeIn 0.4s; }
+.wizard-page.active { display: block; }
+.connection-line { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 20px; }
+.connection-line .line { flex: 1; height: 2px; background: linear-gradient(90deg, rgba(16,185,129,0.5), rgba(6,182,212,0.5), rgba(139,92,246,0.5)); position: relative; overflow: hidden; }
+.connection-line .line::after { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, #fff, transparent); animation: flow 2s infinite; }
+@keyframes flow { 100% { left: 200%; } }
+.connection-line .arrow { color: var(--primary); font-size: 24px; filter: drop-shadow(0 0 8px var(--primary)); }
+
+.server-select-card { background: rgba(0,0,0,0.4); border: 2px solid var(--border); border-radius: 16px; padding: 20px; cursor: pointer; transition: all 0.3s; text-align: center; }
+.server-select-card:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.02); transform: translateY(-2px); }
+.server-select-card.selected { border-color: var(--primary); background: rgba(6,182,212,0.1); box-shadow: 0 8px 25px rgba(6,182,212,0.2); }
+.server-select-card h4 { margin-bottom: 6px; font-size: 16px; }
+.server-select-card p { font-size: 13px; color: var(--text-muted); font-family: monospace; }
 </style>
 </head>
 <body>
+<div class="bg-glow-1"></div><div class="bg-glow-2"></div>
+
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Multi-Server Panel v2.3.0</div>
+<div class="topbar-badge">Premium v2.3.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -956,150 +1044,174 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 <button class="tab" onclick="switchTab('servers')">Servers</button>
 <button class="tab" onclick="switchTab('tunnels')">Tunnels</button>
 <button class="tab" onclick="switchTab('create')">Create Tunnel</button>
+<button class="tab" onclick="switchTab('settings')">Settings</button>
 </div>
 
+<!-- Dashboard -->
 <div class="tab-content active" id="tab-dashboard">
 <div class="server-grid" id="server-grid">
-<div class="empty"><div class="icon"> </div><p>Loading servers...</p></div>
+<div class="empty"><div class="icon">⌛</div><p>Loading premium servers...</p></div>
 </div>
 <div class="section">
-<div class="section-header"><h2>All Tunnels</h2><button class="btn btn-secondary" onclick="refreshAll()" style="font-size:12px;padding:7px 14px"> Refresh</button></div>
+<div class="section-header"><h2>Active Tunnels</h2><button class="btn btn-outline" onclick="refreshAll()">Refresh</button></div>
 <div class="section-body"><div class="tunnel-list" id="dashboard-tunnels"><div class="empty"><p>No tunnels found.</p></div></div></div>
 </div>
 </div>
 
+<!-- Servers -->
 <div class="tab-content" id="tab-servers">
 <div class="section">
-<div class="section-header"><h2>Server Management</h2><button class="btn btn-primary" onclick="showAddServer()" style="font-size:12px;padding:7px 14px">+ Add Server</button></div>
+<div class="section-header"><h2>Server Management</h2><button class="btn btn-primary" onclick="showAddServer()">+ Add Server</button></div>
 <div class="section-body"><div class="server-grid" id="server-manage-grid"></div></div>
 </div>
 </div>
 
+<!-- Tunnels -->
 <div class="tab-content" id="tab-tunnels">
 <div class="section">
-<div class="section-header"><h2>All Tunnels</h2><button class="btn btn-secondary" onclick="refreshAll()" style="font-size:12px;padding:7px 14px"> Refresh</button></div>
+<div class="section-header"><h2>All Tunnels</h2><button class="btn btn-outline" onclick="refreshAll()">Refresh</button></div>
 <div class="section-body"><div class="tunnel-list" id="all-tunnels"><div class="empty"><p>No tunnels found.</p></div></div></div>
 </div>
 </div>
 
+<!-- Create Tunnel -->
 <div class="tab-content" id="tab-create">
 <div class="section">
-<div class="section-header"><h2>  Create Tunnel (Iran + Kharej)</h2></div>
+<div class="section-header"><h2>Create New Tunnel</h2></div>
 <div class="section-body">
 <div class="wizard-steps">
 <div class="wizard-step active" id="ws1">1. Select Servers</div>
-<div class="wizard-step" id="ws2">2. Configure</div>
-<div class="wizard-step" id="ws3">3. Deploy</div>
+<div class="wizard-step" id="ws2">2. Configuration</div>
+<div class="wizard-step" id="ws3">3. Deploying</div>
 </div>
 <div class="wizard-page active" id="wp1">
-<p style="font-size:13px;color:var(--text2);margin-bottom:16px">Select the Iran and Kharej servers to create a tunnel between them.</p>
-<div style="display:grid;grid-template-columns:1fr 40px 1fr;gap:10px;align-items:center">
+<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;text-align:center">Select the origin and destination servers to establish a secure tunnel.</p>
+<div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:20px;align-items:center">
 <div>
-<div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:8px;text-align:center">IRAN (Server)</div>
+<div style="font-size:13px;color:var(--success);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">IRAN (LISTENER)</div>
 <div id="iran-server-select"></div>
 </div>
 <div class="connection-line"><div class="line"></div><div class="arrow">⚡</div><div class="line"></div></div>
 <div>
-<div style="font-size:12px;color:var(--blue);font-weight:600;margin-bottom:8px;text-align:center">KHAREJ (Client)</div>
+<div style="font-size:13px;color:var(--secondary);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">KHAREJ (CONNECTOR)</div>
 <div id="kharej-server-select"></div>
 </div>
 </div>
-<div style="text-align:right;margin-top:20px"><button class="btn btn-primary" onclick="wizardNext(2)">Next →</button></div>
+<div style="text-align:right;margin-top:32px"><button class="btn btn-primary" onclick="wizardNext(2)">Next Step →</button></div>
 </div>
 <div class="wizard-page" id="wp2">
 <div class="form-row">
-<div class="form-group"><label>Transport</label><select id="wiz-transport"><option value="wssmux">WSSMUX (TLS - Recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
-<div class="form-group"><label>Port</label><input id="wiz-port" value="9743"></div>
+<div class="form-group"><label>Transport Protocol</label><select id="wiz-transport"><option value="wssmux">WSSMUX (TLS Encrypted - Recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
+<div class="form-group"><label>Tunnel Port</label><input id="wiz-port" value="9743"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>Token</label><input id="wiz-token" placeholder="Auto-generated"><small style="color:var(--text3);font-size:11px">Leave empty for auto-generate</small></div>
-<div class="form-group"><label>Listen Ports (Iran)</label><input id="wiz-ports" placeholder="443=127.0.0.1:443,9191=127.0.0.1:9191"><small style="color:var(--text3);font-size:11px">Comma separated: port=ip:port</small></div>
+<div class="form-group"><label>Authentication Token</label><input id="wiz-token" placeholder="Leave empty to auto-generate"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Secure 32-char token will be generated if empty</small></div>
+<div class="form-group"><label>Port Forwarding Rules (Iran)</label><input id="wiz-ports" placeholder="e.g. 443=127.0.0.1:443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Comma separated: listen_port=target_ip:target_port</small></div>
 </div>
-<div style="display:flex;justify-content:space-between;margin-top:20px">
-<button class="btn btn-secondary" onclick="wizardNext(1)">← Back</button>
-<button class="btn btn-primary" onclick="wizardNext(3)">Deploy Tunnel →</button>
+<div style="display:flex;justify-content:space-between;margin-top:32px">
+<button class="btn btn-outline" onclick="wizardNext(1)">← Back</button>
+<button class="btn btn-primary" onclick="wizardNext(3)">Launch Tunnel 🚀</button>
 </div>
 </div>
 <div class="wizard-page" id="wp3">
-<div id="deploy-status" style="text-align:center;padding:20px">
-<div style="font-size:18px;margin-bottom:12px">⏳</div>
-<div style="font-size:14px;color:var(--text2)">Deploying tunnel on both servers...</div>
-<div style="font-size:12px;color:var(--text3);margin-top:6px">This may take a few seconds.</div>
+<div id="deploy-status" style="text-align:center;padding:40px 20px">
+<div style="font-size:40px;margin-bottom:20px;animation:spin 2s linear infinite">⚙️</div>
+<div style="font-size:18px;font-weight:600;color:var(--text)">Deploying infrastructure...</div>
+<div style="font-size:14px;color:var(--text-muted);margin-top:8px">Establishing secure connection between nodes.</div>
 </div>
 <div id="deploy-result" style="display:none"></div>
 </div>
 </div>
 </div>
 </div>
+
+<!-- Settings -->
+<div class="tab-content" id="tab-settings">
+<div class="section" style="max-width:600px;margin:0 auto">
+<div class="section-header"><h2>Panel Settings</h2></div>
+<div class="section-body">
+<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px">Update the credentials used to access this web panel.</p>
+<div class="form-group">
+<label>New Username</label>
+<input type="text" id="set-username" placeholder="admin">
+</div>
+<div class="form-group">
+<label>New Password</label>
+<input type="password" id="set-password" placeholder="Enter new password">
+</div>
+<div style="text-align:right;margin-top:24px">
+<button class="btn btn-primary" onclick="updateSettings()">Save Credentials</button>
+</div>
+</div>
+</div>
 </div>
 
+</div>
+
+<!-- Modals -->
 <div class="modal-overlay" id="modal-add-server">
 <div class="modal">
-<div class="modal-header"><h3 id="server-modal-title">Add Server</h3><button class="modal-close" onclick="closeModal('modal-add-server')">&times;</button></div>
+<div class="modal-header"><h3 id="server-modal-title">Add Server</h3><button class="modal-close" onclick="closeModal('modal-add-server')">✕</button></div>
 <div class="modal-body">
-<div class="form-group"><label>Server Name</label><input id="srv-name" placeholder="e.g. Iran Main"></div>
+<div class="form-group"><label>Server Label</label><input id="srv-name" placeholder="e.g. Tehran Node 1"></div>
 <div class="form-row">
-<div class="form-group"><label>IP Address</label><input id="srv-ip" placeholder="1.2.3.4"></div>
-<div class="form-group"><label>Role</label><select id="srv-role"><option value="iran">IRAN</option><option value="kharej">KHAREJ</option></select></div>
+<div class="form-group"><label>IP Address / Domain</label><input id="srv-ip" placeholder="1.2.3.4"></div>
+<div class="form-group"><label>Server Role</label><select id="srv-role"><option value="iran">IRAN (Origin)</option><option value="kharej">KHAREJ (Destination)</option></select></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>SSH User</label><input id="srv-ssh-user" value="root"></div>
+<div class="form-group"><label>SSH Username</label><input id="srv-ssh-user" value="root"></div>
 <div class="form-group"><label>SSH Port</label><input id="srv-ssh-port" value="22" type="number"></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>SSH Password</label><input id="srv-ssh-password" type="password" placeholder="Enter SSH password"></div>
-<div class="form-group"><label>SSH Key Path (optional)</label><input id="srv-ssh-key" placeholder="/root/.ssh/id_rsa"><small style="color:var(--text3);font-size:11px">Leave empty for password auth</small></div>
+<div class="form-group"><label>SSH Password</label><input id="srv-ssh-password" type="password" placeholder="Password (Optional if key used)"></div>
+<div class="form-group"><label>SSH Key Path</label><input id="srv-ssh-key" placeholder="/root/.ssh/id_rsa"></div>
 </div>
 </div>
 <div class="modal-footer">
-<button class="btn btn-secondary" onclick="closeModal('modal-add-server')">Cancel</button>
-<button class="btn btn-primary" onclick="saveServer()">Save</button>
+<button class="btn btn-outline" onclick="closeModal('modal-add-server')">Cancel</button>
+<button class="btn btn-primary" onclick="saveServer()">Save Server</button>
 </div>
 </div>
 </div>
 
 <div class="modal-overlay" id="modal-logs">
-<div class="modal" style="width:700px"><div class="modal-header"><h3>Logs</h3><button class="modal-close" onclick="closeModal('modal-logs')">&times;</button></div><div class="modal-body"><div class="logs-box" id="logs-content">Loading...</div></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-logs')">Close</button></div></div>
+<div class="modal" style="width:800px"><div class="modal-header"><h3>Live Logs</h3><button class="modal-close" onclick="closeModal('modal-logs')">✕</button></div><div class="modal-body"><div class="logs-box" id="logs-content">Fetching logs...</div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modal-logs')">Close</button></div></div>
 </div>
 
 <div class="modal-overlay" id="modal-config">
-<div class="modal" style="width:700px"><div class="modal-header"><h3>Edit Config</h3><button class="modal-close" onclick="closeModal('modal-config')">&times;</button></div><div class="modal-body"><div class="form-group"><textarea id="config-content" style="min-height:300px"></textarea></div></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-config')">Cancel</button><button class="btn btn-primary" onclick="doSaveConfig()">Save & Restart</button></div></div>
+<div class="modal" style="width:700px"><div class="modal-header"><h3>Edit Configuration</h3><button class="modal-close" onclick="closeModal('modal-config')">✕</button></div><div class="modal-body"><div class="form-group"><textarea id="config-content" spellcheck="false"></textarea></div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modal-config')">Cancel</button><button class="btn btn-primary" onclick="doSaveConfig()">Save & Restart</button></div></div>
 </div>
 
 <div class="modal-overlay" id="modal-cron">
-<div class="modal" style="width:440px"><div class="modal-header"><h3>Auto-Restart</h3><button class="modal-close" onclick="closeModal('modal-cron')">&times;</button></div>
+<div class="modal" style="width:480px"><div class="modal-header"><h3>Auto-Restart Schedule</h3><button class="modal-close" onclick="closeModal('modal-cron')">✕</button></div>
 <div class="modal-body">
-<p style="font-size:13px;color:var(--text2);margin-bottom:16px">Interval for <strong id="cron-svc-name"></strong>:</p>
-<div class="cron-select" id="cron-options">
-<div class="cron-option" data-min="30">30 min</div>
-<div class="cron-option" data-min="60">1 hour</div>
-<div class="cron-option" data-min="120">2 hours</div>
-<div class="cron-option" data-min="360">6 hours</div>
+<p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">Configure auto-restart interval for <strong id="cron-svc-name" style="color:#fff"></strong> to maintain optimal speed and clear cache.</p>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="cron-options">
+<div class="btn btn-outline cron-option" data-min="30">30 Minutes</div>
+<div class="btn btn-outline cron-option" data-min="60">1 Hour</div>
+<div class="btn btn-outline cron-option" data-min="120">2 Hours</div>
+<div class="btn btn-outline cron-option" data-min="360">6 Hours</div>
 </div>
 </div>
 <div class="modal-footer">
-<button class="btn btn-danger" onclick="doRemoveCron()" id="btn-remove-cron" style="margin-right:auto;display:none">Disable</button>
-<button class="btn btn-secondary" onclick="closeModal('modal-cron')">Cancel</button>
-<button class="btn btn-primary" onclick="doSetCron()">Apply</button>
+<button class="btn btn-danger" onclick="doRemoveCron()" id="btn-remove-cron" style="margin-right:auto;display:none">Disable Cron</button>
+<button class="btn btn-outline" onclick="closeModal('modal-cron')">Cancel</button>
+<button class="btn btn-primary" onclick="doSetCron()">Apply Schedule</button>
 </div>
 </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
-<script>
-let servers=[];
-let selectedIran="";
-let selectedKharej="";
-let editingServerId="";
-let currentCronSvc="";
-let currentCronServerId="";
-let currentConfigSvc="";
-let currentConfigServerId="";
+<style>
+@keyframes spin { 100% { transform: rotate(360deg); } }
+</style>
 
+<script>
+let servers=[]; let selectedIran=""; let selectedKharej=""; let editingServerId=""; let currentCronSvc=""; let currentCronServerId=""; let currentConfigSvc=""; let currentConfigServerId="";
 function showToast(m,t="info"){const e=document.getElementById("toast");e.textContent=m;e.className="toast "+t+" show";setTimeout(()=>e.classList.remove("show"),3500)}
 function closeModal(id){document.getElementById(id).classList.remove("show")}
-function switchTab(name){document.querySelectorAll(".tab").forEach((t,i)=>t.classList.remove("active"));document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));document.querySelectorAll(".tab").forEach(t=>{if(t.textContent.toLowerCase().includes(name)){t.classList.add("active")}});document.getElementById("tab-"+name).classList.add("active")}
+function switchTab(name){document.querySelectorAll(".tab").forEach((t,i)=>t.classList.remove("active"));document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));document.querySelectorAll(".tab").forEach(t=>{if(t.textContent.toLowerCase().includes(name)){t.classList.add("active")}});document.getElementById("tab-"+name).classList.add("active"); if(name==='settings'){loadCurrentSettings();}}
 
 async function api(url,body){const opts=body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};const r=await fetch(url,opts);if(r.status===401){window.location.href="/login.html";return null}return r.json()}
 async function doLogout(){await api("/api/auth/logout");window.location.href="/login.html"}
@@ -1111,19 +1223,18 @@ if(d&&d.servers){servers=d.servers;renderServerCards();renderServerManage();rend
 
 function renderServerCards(){
 const g=document.getElementById("server-grid");
-if(servers.length===0){g.innerHTML='<div class="empty"><div class="icon"> </div><p>No servers added yet. Go to Servers tab to add one.</p></div>';return}
+if(servers.length===0){g.innerHTML='<div class="empty"><div class="icon">🖥️</div><p>No servers added yet. Head to Servers tab.</p></div>';return}
 g.innerHTML=servers.map(s=>{
 const roleClass=s.role==="iran"?"iran":"kharej";
-const sshDot=s.ssh_ok?"ok":"err";
-const sshText=s.ssh_ok?"Connected":"Disconnected";
-return `<div class="server-card ${roleClass}">
+const sshDot=s.ssh_ok?"ok":"err"; const sshText=s.ssh_ok?"Online":"Offline";
+return `<div class="card server-card ${roleClass}">
 <div class="server-card-header">
 <div class="server-card-title"><h3>${s.name}</h3><span class="role-badge ${roleClass}">${s.role}</span></div>
 <div class="ssh-status"><span class="dot ${sshDot}"></span>${sshText}</div>
 </div>
 <div class="server-stats">
-<div class="server-stat"><div class="label">IP</div><div class="value" style="color:var(--cyan)">${s.ip}</div></div>
-<div class="server-stat"><div class="label">Binary</div><div class="value" style="font-size:12px">${s.version||"N/A"}</div></div>
+<div class="server-stat"><div class="label">IP Address</div><div class="value" style="color:var(--primary);font-family:monospace">${s.ip}</div></div>
+<div class="server-stat"><div class="label">Backhaul</div><div class="value">${s.version||"N/A"}</div></div>
 <div class="server-stat"><div class="label">Memory</div><div class="value">${s.memory||"—"}</div></div>
 <div class="server-stat"><div class="label">Disk</div><div class="value">${s.disk||"—"}</div></div>
 </div>
@@ -1135,59 +1246,57 @@ const g=document.getElementById("server-manage-grid");
 if(servers.length===0){g.innerHTML='<div class="empty"><p>No servers configured.</p></div>';return}
 g.innerHTML=servers.map(s=>{
 const roleClass=s.role==="iran"?"iran":"kharej";
-return `<div class="server-card ${roleClass}">
+return `<div class="card server-card ${roleClass}">
 <div class="server-card-header">
 <div class="server-card-title"><h3>${s.name}</h3><span class="role-badge ${roleClass}">${s.role}</span></div>
 </div>
 <div class="server-stats">
-<div class="server-stat"><div class="label">IP</div><div class="value" style="color:var(--cyan)">${s.ip}</div></div>
+<div class="server-stat"><div class="label">IP Address</div><div class="value" style="color:var(--primary);font-family:monospace">${s.ip}</div></div>
 <div class="server-stat"><div class="label">SSH User</div><div class="value">${s.ssh_user}</div></div>
 <div class="server-stat"><div class="label">SSH Port</div><div class="value">${s.ssh_port||22}</div></div>
-<div class="server-stat"><div class="label">Auth</div><div class="value">${s.ssh_password?"Password":"Key"}</div></div>
+<div class="server-stat"><div class="label">Auth Type</div><div class="value">${s.ssh_password?"Password":"Key"}</div></div>
 </div>
 <div class="server-card-actions">
-<button onclick="installBinary('${s.id}')">Install Binary</button>
-<button onclick="editServer('${s.id}')">Edit</button>
-<button class="del" onclick="deleteServer('${s.id}','${s.name}')">Delete</button>
+<button class="btn btn-outline" onclick="installBinary('${s.id}')">Install Binary</button>
+<button class="btn btn-outline" onclick="editServer('${s.id}')">Edit</button>
+<button class="btn btn-danger" onclick="deleteServer('${s.id}','${s.name}')">Delete</button>
 </div>
 </div>`}).join("");
 }
 
 function renderCreateWizard(){
-const iran=servers.filter(s=>s.role==="iran");
-const kharej=servers.filter(s=>s.role==="kharej");
-document.getElementById("iran-server-select").innerHTML=iran.length?iran.map(s=>`<div class="server-select-card ${selectedIran===s.id?"selected":""}" onclick="selectIran('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div style="text-align:center;color:var(--text3);font-size:12px;padding:20px">No Iran server added</div>';
-document.getElementById("kharej-server-select").innerHTML=kharej.length?kharej.map(s=>`<div class="server-select-card ${selectedKharej===s.id?"selected":""}" onclick="selectKharej('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div style="text-align:center;color:var(--text3);font-size:12px;padding:20px">No Kharej server added</div>';
+const iran=servers.filter(s=>s.role==="iran"); const kharej=servers.filter(s=>s.role==="kharej");
+document.getElementById("iran-server-select").innerHTML=iran.length?iran.map(s=>`<div class="server-select-card ${selectedIran===s.id?"selected":""}" onclick="selectIran('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Iran server added</p></div>';
+document.getElementById("kharej-server-select").innerHTML=kharej.length?kharej.map(s=>`<div class="server-select-card ${selectedKharej===s.id?"selected":""}" onclick="selectKharej('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Kharej server added</p></div>';
 }
 
 function renderDashboardTunnels(){
 api("/api/tunnels").then(d=>{
 if(!d)return;
-const list=document.getElementById("dashboard-tunnels");
-const tl=document.getElementById("all-tunnels");
+const list=document.getElementById("dashboard-tunnels"); const tl=document.getElementById("all-tunnels");
 const tunnels=d.tunnels||[];
-if(tunnels.length===0){const h='<div class="empty"><div class="icon"> </div><p>No tunnels found.</p></div>';list.innerHTML=h;tl.innerHTML=h;return}
+if(tunnels.length===0){const h='<div class="empty"><div class="icon">🔍</div><p>No active tunnels discovered.</p></div>';list.innerHTML=h;tl.innerHTML=h;return}
 const html=tunnels.map(t=>{
 const sc=t.status==="running"?"running":"stopped";
-const cb=t.cron_active?`<span class="cron-badge">  ${t.cron_interval}m</span>`:"";
+const cb=t.cron_active?`<span class="cron-badge">↻ ${t.cron_interval}m</span>`:"";
 return `<div class="tunnel-item">
 <div class="tunnel-left">
 <div class="tunnel-status ${sc}"></div>
 <div>
 <div class="tunnel-name">${t.service} <span class="tunnel-server-tag">${t.server_name}</span>${cb}</div>
 <div class="tunnel-meta">
-<span> ${t.transport.toUpperCase()}</span><span> ${t.bind_addr}</span><span>  ${t.cpu}%</span><span>  ${t.memory}</span>
+<span><b style="color:var(--primary)">Protocol:</b> ${t.transport.toUpperCase()}</span><span><b style="color:var(--secondary)">Bind:</b> ${t.bind_addr}</span><span><b>CPU:</b> ${t.cpu}%</span><span><b>Mem:</b> ${t.memory}</span>
 </div>
 </div>
 </div>
 <div class="tunnel-actions">
-<button class="start" onclick="tunnelAction('start','${t.service}','${t.server_id}')">▶</button>
-<button class="stop" onclick="tunnelAction('stop','${t.service}','${t.server_id}')">⏹</button>
-<button class="restart" onclick="tunnelAction('restart','${t.service}','${t.server_id}')">🔄</button>
-<button onclick="showLogs('${t.service}','${t.server_id}')"> </button>
-<button onclick="showConfig('${t.service}','${t.server_id}')">✏️</button>
-<button onclick="showCron('${t.service}','${t.server_id}',${t.cron_active},'${t.cron_interval}')"></button>
-<button class="delete" onclick="doDelete('${t.service}','${t.server_id}')">🗑</button>
+<button class="icon-btn start" title="Start" onclick="tunnelAction('start','${t.service}','${t.server_id}')">▶</button>
+<button class="icon-btn stop" title="Stop" onclick="tunnelAction('stop','${t.service}','${t.server_id}')">⏹</button>
+<button class="icon-btn restart" title="Restart" onclick="tunnelAction('restart','${t.service}','${t.server_id}')">🔄</button>
+<button class="icon-btn" title="Logs" onclick="showLogs('${t.service}','${t.server_id}')">📄</button>
+<button class="icon-btn" title="Edit Config" onclick="showConfig('${t.service}','${t.server_id}')">✏️</button>
+<button class="icon-btn" title="Auto Restart" onclick="showCron('${t.service}','${t.server_id}',${t.cron_active},'${t.cron_interval}')">⏱</button>
+<button class="icon-btn delete" title="Delete" onclick="doDelete('${t.service}','${t.server_id}')">🗑</button>
 </div>
 </div>`}).join("");
 list.innerHTML=html;tl.innerHTML=html;
@@ -1204,12 +1313,11 @@ if(page===3)doCreateBoth();
 }
 
 async function doCreateBoth(){
-const iranSrv=servers.find(s=>s.id===selectedIran);
-const kharejSrv=servers.find(s=>s.id===selectedKharej);
+const iranSrv=servers.find(s=>s.id===selectedIran); const kharejSrv=servers.find(s=>s.id===selectedKharej);
 if(!iranSrv||!kharejSrv){showToast("Select both servers first","error");wizardNext(1);return}
 const portsRaw=document.getElementById("wiz-ports").value.trim();
 let portsArr=[];
-if(portsRaw){portsArr=portsRaw.split(",").map(p=>p.trim()).filter(Boolean).map(p=>{if(/^\\d+$/.test(p))return p+"=127.0.0.1:"+p;return p});}
+if(portsRaw){portsArr=portsRaw.split(",").map(p=>p.trim()).filter(Boolean).map(p=>{if(/^\\\\d+$/.test(p))return p+"=127.0.0.1:"+p;return p});}
 const params={
 iran_server:iranSrv,kharej_server:kharejSrv,
 transport:document.getElementById("wiz-transport").value,
@@ -1218,45 +1326,46 @@ token:document.getElementById("wiz-token").value,
 ports:portsArr.map(p=>'"'+p+'"').join(",")
 };
 const r=await api("/api/tunnel/create-both",params);
-const ds=document.getElementById("deploy-status");
-const dr=document.getElementById("deploy-result");
+const ds=document.getElementById("deploy-status"); const dr=document.getElementById("deploy-result");
 ds.style.display="none";dr.style.display="block";
 if(r&&r.success){
-dr.innerHTML=`<div style="text-align:center"><div style="font-size:40px;margin-bottom:12px"> </div><div style="font-size:16px;font-weight:600;color:var(--green)">Tunnel Created Successfully!</div>
-<div style="margin-top:16px;text-align:left;background:var(--bg);border-radius:10px;padding:16px;font-size:13px">
-<div style="margin-bottom:8px"><strong>Token:</strong> <span style="color:var(--cyan)">${r.token}</span></div>
-<div style="margin-bottom:8px"><strong>Port:</strong> ${r.port}</div>
-<div style="margin-bottom:8px"><strong>Transport:</strong> ${r.transport.toUpperCase()}</div>
-<div><strong>Iran:</strong> ${r.iran?"✅ "+r.iran.service:"❌ Failed"}</div>
-<div><strong>Kharej:</strong> ${r.kharej?"✅ "+r.kharej.service:"❌ Failed"}</div>
+dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(16,185,129,0.5)">✅</div><div style="font-size:20px;font-weight:600;color:var(--success)">Tunnel Established Successfully!</div>
+<div style="margin-top:24px;text-align:left;background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:16px;padding:20px;font-size:14px">
+<div style="margin-bottom:10px"><strong>Secret Token:</strong> <span style="color:var(--primary);font-family:monospace">${r.token}</span></div>
+<div style="margin-bottom:10px"><strong>Listen Port:</strong> ${r.port}</div>
+<div style="margin-bottom:16px"><strong>Transport:</strong> ${r.transport.toUpperCase()}</div>
+<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px">
+<div><span class="role-badge iran">IRAN</span> ${r.iran?"🟢 "+r.iran.service:"🔴 Failed"}</div>
+<div><span class="role-badge kharej">KHAREJ</span> ${r.kharej?"🟢 "+r.kharej.service:"🔴 Failed"}</div>
 </div>
-<div style="margin-top:16px"><button class="btn btn-primary" onclick="wizardNext(1)">Create Another</button></div></div>`;
-showToast("Tunnel created!","success");refreshAll();
+</div>
+<div style="margin-top:24px"><button class="btn btn-primary" onclick="wizardNext(1)" style="width:100%">Create Another Tunnel</button></div></div>`;
+showToast("Tunnel deployed successfully!","success");refreshAll();
 }else{
-dr.innerHTML=`<div style="text-align:center"><div style="font-size:40px;margin-bottom:12px">❌</div><div style="font-size:16px;font-weight:600;color:var(--red)">Creation Failed</div>
-<div style="margin-top:8px;font-size:13px;color:var(--text3)">Check server connectivity and try again.</div>
-<div style="margin-top:16px"><button class="btn btn-secondary" onclick="wizardNext(1)">Try Again</button></div></div>`;
+dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(239,68,68,0.5)">❌</div><div style="font-size:20px;font-weight:600;color:var(--danger)">Deployment Failed</div>
+<div style="margin-top:12px;font-size:14px;color:var(--text-muted)">Please check SSH connectivity and firewall settings.</div>
+<div style="margin-top:24px"><button class="btn btn-outline" onclick="wizardNext(1)" style="width:100%">Try Again</button></div></div>`;
 showToast("Tunnel creation failed","error");
 }
 }
 
 async function tunnelAction(action,svc,server_id){
-showToast(action+"ing "+svc+"...","info");
+showToast(action.toUpperCase()+" command sent...","info");
 await api("/api/tunnel/action",{service:svc,action:action,server_id:server_id});
-setTimeout(()=>{refreshAll();showToast(svc+" "+action+"ed","success")},2000);
+setTimeout(()=>{refreshAll();showToast("Action completed","success")},2000);
 }
 
 async function doDelete(svc,server_id){
-if(!confirm("Delete "+svc+"?"))return;
+if(!confirm("Are you sure you want to permanently delete "+svc+"?"))return;
 await api("/api/tunnel/delete",{service:svc,server_id:server_id});
 showToast(svc+" deleted","success");refreshAll();
 }
 
 async function showLogs(svc,server_id){
 document.getElementById("modal-logs").classList.add("show");
-document.getElementById("logs-content").textContent="Loading...";
+document.getElementById("logs-content").textContent="Fetching secure logs...";
 const d=await api("/api/tunnel/logs?svc="+encodeURIComponent(svc)+"&server_id="+server_id+"&lines=200");
-if(d)document.getElementById("logs-content").textContent=d.logs||"No logs.";
+if(d)document.getElementById("logs-content").textContent=d.logs||"No logs available.";
 }
 
 async function showConfig(svc,server_id){
@@ -1267,9 +1376,9 @@ if(d)document.getElementById("config-content").value=d.config||"";
 }
 
 async function doSaveConfig(){
-showToast("Saving...","info");
+showToast("Applying configuration...","info");
 await api("/api/tunnel/save_config",{service:currentConfigSvc,config:document.getElementById("config-content").value,server_id:currentConfigServerId});
-closeModal("modal-config");showToast("Config saved","success");refreshAll();
+closeModal("modal-config");showToast("Config saved & service restarted","success");refreshAll();
 }
 
 function showCron(svc,server_id,active,interval){
@@ -1277,17 +1386,17 @@ currentCronSvc=svc;currentCronServerId=server_id;
 document.getElementById("modal-cron").classList.add("show");
 document.getElementById("cron-svc-name").textContent=svc;
 document.getElementById("btn-remove-cron").style.display=active?"inline-block":"none";
-document.querySelectorAll(".cron-option").forEach(o=>{o.classList.toggle("active",active&&o.dataset.min===String(interval))});
+document.querySelectorAll(".cron-option").forEach(o=>{o.classList.toggle("active",active&&o.dataset.min===String(interval)); o.classList.toggle("btn-primary",active&&o.dataset.min===String(interval)); o.classList.toggle("btn-outline",!(active&&o.dataset.min===String(interval)))});
 }
 
-document.querySelectorAll(".cron-option").forEach(o=>{o.onclick=function(){document.querySelectorAll(".cron-option").forEach(x=>x.classList.remove("active"));this.classList.add("active")}});
+document.querySelectorAll(".cron-option").forEach(o=>{o.onclick=function(){document.querySelectorAll(".cron-option").forEach(x=>{x.classList.remove("active","btn-primary"); x.classList.add("btn-outline")});this.classList.add("active","btn-primary");this.classList.remove("btn-outline")}});
 
 async function doSetCron(){
 const a=document.querySelector(".cron-option.active");
-if(!a){showToast("Select interval","error");return}
-showToast("Setting auto-restart...","info");
+if(!a){showToast("Select a schedule interval","error");return}
+showToast("Applying schedule...","info");
 await api("/api/tunnel/cron",{service:currentCronSvc,interval:parseInt(a.dataset.min),action:"set",server_id:currentCronServerId});
-closeModal("modal-cron");showToast("Auto-restart enabled","success");refreshAll();
+closeModal("modal-cron");showToast("Auto-restart schedule active","success");refreshAll();
 }
 
 async function doRemoveCron(){
@@ -1297,7 +1406,7 @@ closeModal("modal-cron");showToast("Auto-restart disabled","success");refreshAll
 
 function showAddServer(editId){
 editingServerId=editId||"";
-document.getElementById("server-modal-title").textContent=editId?"Edit Server":"Add Server";
+document.getElementById("server-modal-title").textContent=editId?"Edit Node Configuration":"Add New Server Node";
 if(editId){
 const s=servers.find(x=>x.id===editId);
 if(s){document.getElementById("srv-name").value=s.name;document.getElementById("srv-ip").value=s.ip;document.getElementById("srv-role").value=s.role;document.getElementById("srv-ssh-user").value=s.ssh_user;document.getElementById("srv-ssh-port").value=s.ssh_port||22;document.getElementById("srv-ssh-password").value=s.ssh_password||"";document.getElementById("srv-ssh-key").value=s.ssh_key||""}
@@ -1311,27 +1420,41 @@ function editServer(id){showAddServer(id)}
 
 async function saveServer(){
 const params={name:document.getElementById("srv-name").value,ip:document.getElementById("srv-ip").value,role:document.getElementById("srv-role").value,ssh_user:document.getElementById("srv-ssh-user").value,ssh_password:document.getElementById("srv-ssh-password").value,ssh_port:parseInt(document.getElementById("srv-ssh-port").value)||22,ssh_key:document.getElementById("srv-ssh-key").value};
-if(!params.name||!params.ip){showToast("Name and IP required","error");return}
-showToast("Testing connection...","info");
+if(!params.name||!params.ip){showToast("Label and IP address are required","error");return}
+showToast("Verifying SSH connection...","info");
 const test=await api("/api/server/test",{ip:params.ip,ssh_user:params.ssh_user,ssh_password:params.ssh_password,ssh_port:params.ssh_port,ssh_key:params.ssh_key});
-if(!test||!test.success){showToast("Cannot connect to server. Check IP and SSH.","error");return}
+if(!test||!test.success){showToast("Connection failed. Check IP and credentials.","error");return}
 if(editingServerId){params.id=editingServerId;await api("/api/server/update",params)}
 else{await api("/api/server/add",params)}
-closeModal("modal-add-server");showToast("Server saved","success");loadServers();
+closeModal("modal-add-server");showToast("Server configuration saved","success");loadServers();
 }
 
 async function deleteServer(id,name){
-if(!confirm("Delete server "+name+"?"))return;
+if(!confirm("Are you sure you want to remove "+name+" from the panel?"))return;
 await api("/api/server/delete",{id:id});
-showToast("Server deleted","success");loadServers();
+showToast("Server removed","success");loadServers();
 }
 
 async function installBinary(server_id){
-if(!confirm("Install/update Backhaul binary on this server?"))return;
-showToast("Installing binary...","info");
+if(!confirm("Deploy the latest Backhaul binary to this node?"))return;
+showToast("Downloading and installing...","info");
 const r=await api("/api/install/binary",{server_id:server_id});
-if(r&&r.success){showToast("Installed: "+r.version,"success");loadServers()}
-else{showToast("Install failed","error")}
+if(r&&r.success){showToast("Successfully deployed: "+r.version,"success");loadServers()}
+else{showToast("Installation failed","error")}
+}
+
+async function loadCurrentSettings(){
+const r=await api("/api/settings/get");
+if(r&&r.username){document.getElementById("set-username").value=r.username;document.getElementById("set-password").value="";}
+}
+
+async function updateSettings(){
+const u=document.getElementById("set-username").value; const p=document.getElementById("set-password").value;
+if(!u||!p){showToast("Username and new password are required","error");return;}
+showToast("Updating credentials...","info");
+const r=await api("/api/settings/update",{username:u,password:p});
+if(r&&r.success){showToast("Credentials updated successfully","success");document.getElementById("set-password").value="";}
+else{showToast("Failed to update credentials","error")}
 }
 
 function refreshAll(){loadServers();renderDashboardTunnels()}
@@ -1342,7 +1465,7 @@ setInterval(()=>{loadServers();renderDashboardTunnels()},15000);
 document.querySelectorAll(".modal-overlay").forEach(m=>{m.addEventListener("click",function(e){if(e.target===this)this.classList.remove("show")})});
 </script>
 </body>
-</html>'''
+</html>"""
 
 
 if __name__ == "__main__":

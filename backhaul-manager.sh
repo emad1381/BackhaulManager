@@ -2054,6 +2054,27 @@ WEBPANEL_PORT=54321
 WEBPANEL_DIR="$INSTALL_DIR/webpanel"
 WEBPANEL_SCRIPT="$WEBPANEL_DIR/server.py"
 
+_install_webpanel_deps() {
+    local deps_missing=0
+    command -v python3 &>/dev/null || deps_missing=1
+    command -v sshpass &>/dev/null || deps_missing=1
+    if [[ "$deps_missing" -eq 1 ]]; then
+        info "Installing required dependencies (python3, sshpass)..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -y -q >/dev/null 2>&1
+            apt-get install -y python3 sshpass >/dev/null 2>&1
+        elif command -v yum &>/dev/null; then
+            yum install -y python3 sshpass >/dev/null 2>&1
+        fi
+    fi
+    if ! command -v python3 &>/dev/null; then
+        warn "Could not install python3. Web panel may not start."
+    fi
+    if ! command -v sshpass &>/dev/null; then
+        warn "Could not install sshpass. Password auth may not work."
+    fi
+}
+
 menu_webpanel() {
     while true; do
     clear
@@ -2096,6 +2117,8 @@ menu_webpanel() {
                 press_enter; continue
             fi
 
+            _install_webpanel_deps
+
             # Check python3
             if ! command -v python3 &>/dev/null; then
                 warn "python3 not found. Please install python3 first."
@@ -2108,11 +2131,7 @@ menu_webpanel() {
                 press_enter; continue
             fi
 
-            # Install sshpass if not installed (needed for password auth)
-            if ! command -v sshpass &>/dev/null; then
-                info "Installing sshpass for SSH password authentication..."
-                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
-            fi
+            # (dependencies installed via _install_webpanel_deps above)
 
             # Kill any process using port 54321
             info "Checking port $WEBPANEL_PORT..."
@@ -2165,11 +2184,7 @@ menu_webpanel() {
             press_enter
             ;;
         3)
-            # Install sshpass if not installed
-            if ! command -v sshpass &>/dev/null; then
-                info "Installing sshpass for SSH password authentication..."
-                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
-            fi
+            _install_webpanel_deps
             
             info "Creating systemd service for Web Panel..."
             cat > "$SERVICE_DIR/backhaul-webpanel.service" <<SERVICE
@@ -2210,11 +2225,7 @@ SERVICE
             info "Installing Web Panel files..."
             mkdir -p "$WEBPANEL_DIR"
 
-            # Install sshpass if not installed
-            if ! command -v sshpass &>/dev/null; then
-                info "Installing sshpass for SSH password authentication..."
-                apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
-            fi
+            _install_webpanel_deps
 
             # Download from GitHub
             local raw_url="https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
@@ -2265,11 +2276,7 @@ SERVICE
                     press_enter; continue
                 fi
                 
-                # Install sshpass if not installed
-                if ! command -v sshpass &>/dev/null; then
-                    info "Installing sshpass for SSH password authentication..."
-                    apt-get install -y sshpass 2>/dev/null || yum install -y sshpass 2>/dev/null || warn "Could not install sshpass. Password auth may not work."
-                fi
+                _install_webpanel_deps
                 
                 nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
                 sleep 4
