@@ -221,13 +221,21 @@ update_script() {
             return 1
         fi
 
+        local dest_path=""
+        if [[ -f "$running_script" ]] && [[ -w "$running_script" ]] && [[ "$running_script" != *"/fd/"* ]] && [[ "$running_script" != *"/pipe:"* ]] && [[ "$running_script" != *"/dev/fd/"* ]]; then
+            dest_path="$running_script"
+        else
+            dest_path="./backhaul-manager.sh"
+            info "Script is running from a pipe/stream. Saving update to: $dest_path"
+        fi
+
         chmod +x "$temp_file"
-        cp "$temp_file" "$running_script"
+        cp "$temp_file" "$dest_path"
         rm -f "$temp_file"
         success "Script updated successfully!"
         info "Restarting script..."
         sleep 1
-        exec bash "$running_script" "$@"
+        exec bash "$dest_path" "$@"
     else
         warn "Download failed. Please check internet connection or mirrors."
         rm -f "$temp_file"
