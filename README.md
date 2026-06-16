@@ -22,10 +22,17 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 ## Requirements
 
 - Linux server with `systemd`
-- Root access
+- Root access (or user with passwordless sudo)
 - `bash`, `curl` or `wget`, `tar`
 - Optional: `ufw`, `iptables`, `openssl`
 - For SSH password auth: `sshpass` (install with `apt install sshpass` or `yum install sshpass`)
+
+**Note for non-root users (e.g., Ubuntu on Abrarvan):**
+If your server user is not `root`, make sure the user has passwordless sudo access:
+```bash
+sudo usermod -aG sudo your_username
+echo "your_username ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/your_username
+```
 
 ## Quick Start
 

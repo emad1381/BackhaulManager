@@ -42,13 +42,26 @@ def run_cmd(cmd, timeout=30):
         return str(e), 1
 
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
-    ssh_opts = f"-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -p {port}"
+    ssh_opts = f"-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p {port}"
     if password:
-        full_cmd = f'sshpass -p "{password}" ssh {ssh_opts} {user}@{host} "{cmd}"'
+        sshpass_check, _ = run_cmd("which sshpass")
+        if not sshpass_check:
+            return "sshpass not installed. Run: apt install sshpass", 1
+        ssh_opts += " -o PubkeyAuthentication=no"
+        full_cmd = ["sshpass", "-p", password, "ssh", ssh_opts, f"{user}@{host}", cmd]
     else:
-        key_opt = f"-i {key_file}" if key_file else ""
-        full_cmd = f"ssh {ssh_opts} {key_opt} {user}@{host} '{cmd}'"
-    return run_cmd(full_cmd, timeout)
+        ssh_opts += " -o BatchMode=yes"
+        if key_file:
+            full_cmd = ["ssh", "-i", key_file, ssh_opts, f"{user}@{host}", cmd]
+        else:
+            full_cmd = ["ssh", ssh_opts, f"{user}@{host}", cmd]
+    try:
+        r = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip(), r.returncode
+    except subprocess.TimeoutExpired:
+        return "Command timed out", 1
+    except Exception as e:
+        return str(e), 1
 
 def get_local_ip():
     out, _ = run_cmd("hostname -I 2>/dev/null | awk '{print $1}'")
@@ -56,7 +69,8 @@ def get_local_ip():
 
 def get_server_role(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
-        out, _ = run_ssh(host, user, key_file, "systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)", password=password, port=port)
+        cmd = sudo_cmd(user, "systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)")
+        out, _ = run_ssh(host, user, key_file, cmd, password=password, port=port)
     else:
         out, _ = run_cmd("systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)")
     return out.strip() if out else "unknown"
@@ -75,9 +89,14 @@ def save_servers(data):
     with open(SERVERS_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
+def sudo_cmd(user, cmd):
+    if user != "root":
+        return f"sudo {cmd}"
+    return cmd
+
 def get_binary_version(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
-        out, _ = run_ssh(host, user, key_file, f"{BINARY} --version 2>/dev/null | head -1", password=password, port=port)
+        out, _ = run_ssh(host, user, key_file, sudo_cmd(user, f"{BINARY} --version 2>/dev/null | head -1"), password=password, port=port)
     else:
         out, _ = run_cmd(f"{BINARY} --version 2>/dev/null | head -1")
     return out if out else "not installed"
@@ -105,14 +124,14 @@ def get_server_info(srv):
         ssh_ok = True
     else:
         ip = host
-        hostname_out, _ = run_ssh(host, user, key, "hostname", password=password, port=port)
+        hostname_out, _ = run_ssh(host, user, key, sudo_cmd(user, "hostname"), password=password, port=port)
         version = get_binary_version(host, user, key, password=password, port=port)
         role_actual = get_server_role(host, user, key, password=password, port=port)
-        kernel, _ = run_ssh(host, user, key, "uname -r", password=password, port=port)
-        load, _ = run_ssh(host, user, key, "cut -d' ' -f1-3 /proc/loadavg", password=password, port=port)
-        mem, _ = run_ssh(host, user, key, "free -h | awk '/^Mem:/{print $3 \" used / \" $2}'", password=password, port=port)
-        disk, _ = run_ssh(host, user, key, "df -h / | awk 'NR==2{print $3 \" used / \" $2}'", password=password, port=port)
-        uptime_out, _ = run_ssh(host, user, key, "uptime -p", password=password, port=port)
+        kernel, _ = run_ssh(host, user, key, sudo_cmd(user, "uname -r"), password=password, port=port)
+        load, _ = run_ssh(host, user, key, sudo_cmd(user, "cut -d' ' -f1-3 /proc/loadavg"), password=password, port=port)
+        mem, _ = run_ssh(host, user, key, sudo_cmd(user, "free -h | awk '/^Mem:/{print $3 \" used / \" $2}'"), password=password, port=port)
+        disk, _ = run_ssh(host, user, key, sudo_cmd(user, "df -h / | awk 'NR==2{print $3 \" used / \" $2}'"), password=password, port=port)
+        uptime_out, _ = run_ssh(host, user, key, sudo_cmd(user, "uptime -p"), password=password, port=port)
         ssh_ok = (hostname_out != "" and "Permission denied" not in hostname_out and "Connection refused" not in hostname_out and "No route to host" not in hostname_out)
 
     return {
@@ -144,7 +163,7 @@ def get_tunnels_from_server(srv):
     if is_local:
         out, _ = run_cmd("systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u")
     else:
-        out, _ = run_ssh(host, user, key, "systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u", password=password, port=port)
+        out, _ = run_ssh(host, user, key, sudo_cmd(user, "systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u"), password=password, port=port)
 
     if not out:
         return tunnels
@@ -161,11 +180,11 @@ def get_tunnels_from_server(srv):
             mem_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
             up_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
         else:
-            status_out, _ = run_ssh(host, user, key, f"systemctl is-active {svc} 2>/dev/null", password=password, port=port)
-            pid_out, _ = run_ssh(host, user, key, f"systemctl show -p MainPID --value {svc} 2>/dev/null", password=password, port=port)
-            cpu_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
-            mem_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
-            up_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
+            status_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"systemctl is-active {svc} 2>/dev/null"), password=password, port=port)
+            pid_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"systemctl show -p MainPID --value {svc} 2>/dev/null"), password=password, port=port)
+            cpu_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
+            mem_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
+            up_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
 
         cpu = cpu_out.strip() if cpu_out else "—"
         try:
@@ -191,7 +210,7 @@ def get_tunnels_from_server(srv):
                 except:
                     pass
         else:
-            cfg_out, _ = run_ssh(host, user, key, f"cat {config_path} 2>/dev/null", password=password, port=port)
+            cfg_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"cat {config_path} 2>/dev/null"), password=password, port=port)
             if cfg_out:
                 for line in cfg_out.split('\n'):
                     if 'transport' in line and '=' in line:
@@ -213,7 +232,7 @@ def get_tunnels_from_server(srv):
                 except:
                     pass
         else:
-            cron_out, _ = run_ssh(host, user, key, f"cat {cron_conf} 2>/dev/null | grep INTERVAL", password=password, port=port)
+            cron_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"cat {cron_conf} 2>/dev/null | grep INTERVAL"), password=password, port=port)
             if cron_out:
                 cron_interval = cron_out.split("=")[1].strip() if "=" in cron_out else ""
                 cron_active = bool(cron_interval)
@@ -243,7 +262,7 @@ def remote_exec(srv, cmd, timeout=30):
     is_local = host in ["127.0.0.1", "localhost", get_local_ip()]
     if is_local:
         return run_cmd(cmd, timeout)
-    return run_ssh(host, user, key, cmd, timeout, password=password, port=port)
+    return run_ssh(host, user, key, sudo_cmd(user, cmd), timeout, password=password, port=port)
 
 def create_tunnel_on_server(srv, params):
     role = params.get("role", srv.get("role", "iran"))
@@ -330,7 +349,7 @@ def create_tunnel_on_server(srv, params):
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
         escaped = config_content.replace("'", "'\\''")
-        run_ssh(host, user, key, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << 'ENDOFFILE'\n{config_content}ENDOFFILE", password=password, port=ssh_port)
+        run_ssh(host, user, key, sudo_cmd(user, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << 'ENDOFFILE'\n{config_content}ENDOFFILE"), password=password, port=ssh_port)
 
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
@@ -360,7 +379,7 @@ WantedBy=multi-user.target
         key = srv.get("ssh_key", "")
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
-        run_ssh(host, user, key, f"cat > {service_file} << 'ENDOFFILE'\n{service_content}ENDOFFILE", password=password, port=ssh_port)
+        run_ssh(host, user, key, sudo_cmd(user, f"cat > {service_file} << 'ENDOFFILE'\n{service_content}ENDOFFILE"), password=password, port=ssh_port)
 
     remote_exec(srv, "systemctl daemon-reload")
     remote_exec(srv, f"systemctl enable {svc_name} 2>/dev/null")
@@ -603,7 +622,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 out, code = run_cmd("hostname && echo 'SSH_OK'")
                 self.send_json({"success": code == 0, "output": out})
             else:
-                out, code = run_ssh(host, user, key, "hostname && echo SSH_OK", timeout=10, password=password, port=port)
+                out, code = run_ssh(host, user, key, sudo_cmd(user, "hostname && echo SSH_OK"), timeout=10, password=password, port=port)
                 self.send_json({"success": "SSH_OK" in out, "output": out})
             return
 
@@ -722,7 +741,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                         with open(config_path, 'w') as f:
                             f.write(config)
                     else:
-                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), f"cat > {config_path} << 'ENDOFFILE'\n{config}ENDOFFILE", password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
+                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), sudo_cmd(srv.get("ssh_user", "root"), f"cat > {config_path} << 'ENDOFFILE'\n{config}ENDOFFILE"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
                     remote_exec(srv, f"systemctl restart {svc}")
                     self.send_json({"success": True})
                 else:
