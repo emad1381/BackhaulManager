@@ -1353,6 +1353,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="modal">
 <div class="modal-header"><h3 id="server-modal-title">Add Server</h3><button class="modal-close" onclick="closeModal('modal-add-server')">✕</button></div>
 <div class="modal-body">
+<div id="add-srv-form-fields">
 <div class="form-group"><label>Server Label</label><input id="srv-name" placeholder="e.g. Tehran Node 1"></div>
 <div class="form-row">
 <div class="form-group"><label>IP Address / Domain</label><input id="srv-ip" placeholder="1.2.3.4"></div>
@@ -1365,6 +1366,17 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="form-row">
 <div class="form-group"><label>SSH Password</label><input id="srv-ssh-password" type="password" placeholder="Password (Optional if key used)"></div>
 <div class="form-group"><label>SSH Key Path</label><input id="srv-ssh-key" placeholder="/root/.ssh/id_rsa"></div>
+</div>
+</div>
+<div id="add-srv-progress-container" style="display:none; margin-top:10px;">
+  <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:600;">
+    <span id="add-srv-status-text" style="color:var(--text-muted)">Testing connection...</span>
+    <span id="add-srv-pct-text" style="color:var(--primary)">0%</span>
+  </div>
+  <div style="width:100%; height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
+    <div id="add-srv-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--primary), var(--secondary)); transition:width 0.4s ease, background 0.4s ease; border-radius:4px;"></div>
+  </div>
+  <div id="add-srv-error-details" style="display:none; color:var(--danger); font-size:12px; margin-top:15px; font-family:monospace; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:12px; text-align:left; line-height:1.5;"></div>
 </div>
 </div>
 <div class="modal-footer">
@@ -1658,6 +1670,14 @@ closeModal("modal-cron");showToast("Auto-restart disabled","success");refreshAll
 function showAddServer(editId){
 editingServerId=editId||"";
 document.getElementById("server-modal-title").textContent=editId?"Edit Node Configuration":"Add New Server Node";
+
+// Reset progress state & show form fields
+document.getElementById("add-srv-form-fields").style.display = "block";
+document.querySelector("#modal-add-server .modal-footer").style.display = "flex";
+document.getElementById("add-srv-progress-container").style.display = "none";
+const saveBtn = document.querySelector("#modal-add-server .modal-footer .btn-primary");
+saveBtn.textContent = "Save Server";
+
 if(editId){
 const s=servers.find(x=>x.id===editId);
 if(s){document.getElementById("srv-name").value=s.name;document.getElementById("srv-ip").value=s.ip;document.getElementById("srv-role").value=s.role;document.getElementById("srv-ssh-user").value=s.ssh_user;document.getElementById("srv-ssh-port").value=s.ssh_port||22;document.getElementById("srv-ssh-password").value=s.ssh_password||"";document.getElementById("srv-ssh-key").value=s.ssh_key||""}
@@ -1672,12 +1692,96 @@ function editServer(id){showAddServer(id)}
 async function saveServer(){
 const params={name:document.getElementById("srv-name").value,ip:document.getElementById("srv-ip").value,role:document.getElementById("srv-role").value,ssh_user:document.getElementById("srv-ssh-user").value,ssh_password:document.getElementById("srv-ssh-password").value,ssh_port:parseInt(document.getElementById("srv-ssh-port").value)||22,ssh_key:document.getElementById("srv-ssh-key").value};
 if(!params.name||!params.ip){showToast("Label and IP address are required","error");return}
-showToast("Verifying SSH connection...","info");
-const test=await api("/api/server/test",{ip:params.ip,ssh_user:params.ssh_user,ssh_password:params.ssh_password,ssh_port:params.ssh_port,ssh_key:params.ssh_key});
-if(!test||!test.success){showToast("Connection failed. Check IP and credentials.","error");return}
-if(editingServerId){params.id=editingServerId;await api("/api/server/update",params)}
-else{await api("/api/server/add",params)}
-closeModal("modal-add-server");showToast("Server configuration saved","success");loadServers();
+
+const fields = document.getElementById("add-srv-form-fields");
+const footer = document.querySelector("#modal-add-server .modal-footer");
+const progressContainer = document.getElementById("add-srv-progress-container");
+const statusBar = document.getElementById("add-srv-progress-bar");
+const statusText = document.getElementById("add-srv-status-text");
+const pctText = document.getElementById("add-srv-pct-text");
+const errorDetails = document.getElementById("add-srv-error-details");
+
+// Hide inputs, show progress
+fields.style.display = "none";
+footer.style.display = "none";
+progressContainer.style.display = "block";
+errorDetails.style.display = "none";
+statusBar.style.background = "linear-gradient(90deg, var(--primary), var(--secondary))";
+statusBar.style.width = "0%";
+
+// Fake progressive steps
+let progress = 0;
+statusText.textContent = "Connecting to remote server...";
+pctText.textContent = "0%";
+
+const interval = setInterval(() => {
+    if (progress < 85) {
+        progress += Math.floor(Math.random() * 10) + 2;
+        if (progress > 85) progress = 85;
+        statusBar.style.width = progress + "%";
+        pctText.textContent = progress + "%";
+        
+        if (progress > 20 && progress <= 45) {
+            statusText.textContent = "Initiating SSH handshake...";
+        } else if (progress > 45 && progress <= 70) {
+            statusText.textContent = "Authenticating credentials...";
+        } else if (progress > 70) {
+            statusText.textContent = "Verifying environment and host tools...";
+        }
+    }
+}, 300);
+
+let test;
+try {
+    test = await api("/api/server/test", {ip:params.ip, ssh_user:params.ssh_user, ssh_password:params.ssh_password, ssh_port:params.ssh_port, ssh_key:params.ssh_key});
+} catch(e) {
+    test = { success: false, output: String(e) };
+}
+
+clearInterval(interval);
+
+if (test && test.success) {
+    statusBar.style.width = "100%";
+    pctText.textContent = "100%";
+    statusBar.style.background = "var(--success)";
+    statusText.textContent = "Connection Verified! Saving configuration...";
+    
+    // Perform save
+    if (editingServerId) {
+        params.id = editingServerId;
+        await api("/api/server/update", params);
+    } else {
+        await api("/api/server/add", params);
+    }
+    
+    setTimeout(() => {
+        // Reset modal layout
+        progressContainer.style.display = "none";
+        fields.style.display = "block";
+        footer.style.display = "flex";
+        closeModal("modal-add-server");
+        showToast("Server configuration saved", "success");
+        loadServers();
+    }, 1000);
+} else {
+    statusBar.style.width = "100%";
+    pctText.textContent = "Failed";
+    statusBar.style.background = "var(--danger)";
+    statusText.textContent = "Verification Failed!";
+    
+    let errMsg = "Connection failed. Please check IP, port, and credentials.";
+    if (test && test.output) {
+        errMsg += `<br><span style="font-size:11px; opacity:0.8;">Details: ${test.output}</span>`;
+    }
+    errorDetails.innerHTML = errMsg;
+    errorDetails.style.display = "block";
+    
+    // Show footer and let them try again
+    footer.style.display = "flex";
+    const saveBtn = footer.querySelector(".btn-primary");
+    saveBtn.textContent = "Retry & Save";
+    fields.style.display = "block";
+}
 }
 
 async function deleteServer(id,name){
