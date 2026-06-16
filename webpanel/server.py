@@ -367,6 +367,19 @@ WantedBy=multi-user.target
     }
 
 
+class ReuseAddrHTTPServer(http.server.HTTPServer):
+    allow_reuse_address = True
+    allow_reuse_port = True
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass
+        super().server_bind()
+
+
 class PanelHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
@@ -1294,8 +1307,7 @@ if __name__ == "__main__":
     os.makedirs(BACKUP_DIR, exist_ok=True)
     os.makedirs(PANEL_DIR, exist_ok=True)
 
-    server = http.server.HTTPServer(("0.0.0.0", PORT), PanelHandler)
-    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
     print("  BackhaulManager Web Panel v2.1.0")

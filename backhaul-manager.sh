@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.3.1
+#  Version : 1.3.2
 #  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
@@ -171,7 +171,7 @@ LOGO
 ask_server_role() {
     clear
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.1 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.2 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
     # Try auto-detect first
@@ -221,7 +221,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.1 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.2 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2055,6 +2055,8 @@ WEBPANEL_DIR="$INSTALL_DIR/webpanel"
 WEBPANEL_SCRIPT="$WEBPANEL_DIR/server.py"
 
 menu_webpanel() {
+    while true; do
+    clear
     section "Web Panel"
 
     echo -e "  ${BOLD}${WHITE}BackhaulManager Web Panel${NC}"
@@ -2083,7 +2085,7 @@ menu_webpanel() {
     echo -e "  ${WHITE}[2]${NC} ${RED}Stop${NC}  Web Panel"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Start${NC} on boot (systemd service)"
     echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel files"
-    echo -e "  ${WHITE}[0]${NC} Back"
+    echo -e "  ${WHITE}[0]${NC} Back to Main Menu"
     separator
     prompt "Choice:"; read -r wp_choice
 
@@ -2151,8 +2153,8 @@ menu_webpanel() {
             ;;
         2)
             if [[ -n "$running_pid" ]]; then
-                kill "$running_pid" 2>/dev/null
-                pkill -f "python3.*server.py.*$WEBPANEL_PORT" 2>/dev/null
+                kill -9 "$running_pid" 2>/dev/null
+                pkill -9 -f "python3.*server.py.*$WEBPANEL_PORT" 2>/dev/null
                 sleep 1
                 success "Web Panel stopped."
             else
@@ -2210,7 +2212,7 @@ SERVICE
                 curl -sL -o "$WEBPANEL_SCRIPT" "$raw_url" 2>/dev/null
             else
                 warn "Neither wget nor curl found."
-                press_enter; return
+                press_enter; continue
             fi
 
             if [[ -f "$WEBPANEL_SCRIPT" ]] && [[ -s "$WEBPANEL_SCRIPT" ]]; then
@@ -2226,6 +2228,7 @@ SERVICE
         0) return ;;
         *) warn "Invalid choice"; press_enter ;;
     esac
+    done
 }
 
 # ─── MAIN MENU ───────────────────────────────────────────────────────────────
