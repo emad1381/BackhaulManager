@@ -25,6 +25,7 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 - Root access
 - `bash`, `curl` or `wget`, `tar`
 - Optional: `ufw`, `iptables`, `openssl`
+- For SSH password auth: `sshpass` (install with `apt install sshpass` or `yum install sshpass`)
 
 ## Quick Start
 
@@ -84,6 +85,7 @@ Beautiful web interface to manage **both Iran and Kharej servers** from one plac
 **Features:**
 - **Multi-Server Management** — add Iran + Kharej servers, manage from one dashboard
 - **One-Click Tunnel Creation** — create matching tunnel on both servers simultaneously
+- **SSH Password & Key Auth** — connect with password or SSH key, custom SSH port
 - Beautiful dashboard with server status cards
 - Create, start, stop, restart, and delete tunnels
 - View live logs and edit config files

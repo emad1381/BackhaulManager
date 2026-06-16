@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.2.0
+Version: 2.3.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -41,19 +41,22 @@ def run_cmd(cmd, timeout=30):
     except Exception as e:
         return str(e), 1
 
-def run_ssh(host, user, key_file, cmd, timeout=30):
-    ssh_opts = "-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
-    key_opt = f"-i {key_file}" if key_file else ""
-    full_cmd = f"ssh {ssh_opts} {key_opt} {user}@{host} '{cmd}'"
+def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
+    ssh_opts = f"-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -p {port}"
+    if password:
+        full_cmd = f'sshpass -p "{password}" ssh {ssh_opts} {user}@{host} "{cmd}"'
+    else:
+        key_opt = f"-i {key_file}" if key_file else ""
+        full_cmd = f"ssh {ssh_opts} {key_opt} {user}@{host} '{cmd}'"
     return run_cmd(full_cmd, timeout)
 
 def get_local_ip():
     out, _ = run_cmd("hostname -I 2>/dev/null | awk '{print $1}'")
     return out if out else "unknown"
 
-def get_server_role(host=None, user=None, key_file=None):
+def get_server_role(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
-        out, _ = run_ssh(host, user, key_file, "systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)")
+        out, _ = run_ssh(host, user, key_file, "systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)", password=password, port=port)
     else:
         out, _ = run_cmd("systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)")
     return out.strip() if out else "unknown"
@@ -72,9 +75,9 @@ def save_servers(data):
     with open(SERVERS_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
-def get_binary_version(host=None, user=None, key_file=None):
+def get_binary_version(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
-        out, _ = run_ssh(host, user, key_file, f"{BINARY} --version 2>/dev/null | head -1")
+        out, _ = run_ssh(host, user, key_file, f"{BINARY} --version 2>/dev/null | head -1", password=password, port=port)
     else:
         out, _ = run_cmd(f"{BINARY} --version 2>/dev/null | head -1")
     return out if out else "not installed"
@@ -83,6 +86,8 @@ def get_server_info(srv):
     host = srv.get("ip", "127.0.0.1")
     user = srv.get("ssh_user", "root")
     key = srv.get("ssh_key", "")
+    password = srv.get("ssh_password", "")
+    port = srv.get("ssh_port", 22)
     name = srv.get("name", "Unknown")
     role = srv.get("role", "unknown")
     is_local = host in ["127.0.0.1", "localhost", get_local_ip()]
@@ -100,14 +105,14 @@ def get_server_info(srv):
         ssh_ok = True
     else:
         ip = host
-        hostname_out, _ = run_ssh(host, user, key, "hostname")
-        version = get_binary_version(host, user, key)
-        role_actual = get_server_role(host, user, key)
-        kernel, _ = run_ssh(host, user, key, "uname -r")
-        load, _ = run_ssh(host, user, key, "cut -d' ' -f1-3 /proc/loadavg")
-        mem, _ = run_ssh(host, user, key, "free -h | awk '/^Mem:/{print $3 \" used / \" $2}'")
-        disk, _ = run_ssh(host, user, key, "df -h / | awk 'NR==2{print $3 \" used / \" $2}'")
-        uptime_out, _ = run_ssh(host, user, key, "uptime -p")
+        hostname_out, _ = run_ssh(host, user, key, "hostname", password=password, port=port)
+        version = get_binary_version(host, user, key, password=password, port=port)
+        role_actual = get_server_role(host, user, key, password=password, port=port)
+        kernel, _ = run_ssh(host, user, key, "uname -r", password=password, port=port)
+        load, _ = run_ssh(host, user, key, "cut -d' ' -f1-3 /proc/loadavg", password=password, port=port)
+        mem, _ = run_ssh(host, user, key, "free -h | awk '/^Mem:/{print $3 \" used / \" $2}'", password=password, port=port)
+        disk, _ = run_ssh(host, user, key, "df -h / | awk 'NR==2{print $3 \" used / \" $2}'", password=password, port=port)
+        uptime_out, _ = run_ssh(host, user, key, "uptime -p", password=password, port=port)
         ssh_ok = (hostname_out != "" and "Permission denied" not in hostname_out and "Connection refused" not in hostname_out and "No route to host" not in hostname_out)
 
     return {
@@ -131,13 +136,15 @@ def get_tunnels_from_server(srv):
     host = srv.get("ip", "127.0.0.1")
     user = srv.get("ssh_user", "root")
     key = srv.get("ssh_key", "")
+    password = srv.get("ssh_password", "")
+    port = srv.get("ssh_port", 22)
     is_local = host in ["127.0.0.1", "localhost", get_local_ip()]
 
     tunnels = []
     if is_local:
         out, _ = run_cmd("systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u")
     else:
-        out, _ = run_ssh(host, user, key, "systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u")
+        out, _ = run_ssh(host, user, key, "systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u", password=password, port=port)
 
     if not out:
         return tunnels
@@ -154,11 +161,11 @@ def get_tunnels_from_server(srv):
             mem_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
             up_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
         else:
-            status_out, _ = run_ssh(host, user, key, f"systemctl is-active {svc} 2>/dev/null")
-            pid_out, _ = run_ssh(host, user, key, f"systemctl show -p MainPID --value {svc} 2>/dev/null")
-            cpu_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
-            mem_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
-            up_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
+            status_out, _ = run_ssh(host, user, key, f"systemctl is-active {svc} 2>/dev/null", password=password, port=port)
+            pid_out, _ = run_ssh(host, user, key, f"systemctl show -p MainPID --value {svc} 2>/dev/null", password=password, port=port)
+            cpu_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
+            mem_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
+            up_out, _ = run_ssh(host, user, key, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null", password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
 
         cpu = cpu_out.strip() if cpu_out else "—"
         try:
@@ -184,7 +191,7 @@ def get_tunnels_from_server(srv):
                 except:
                     pass
         else:
-            cfg_out, _ = run_ssh(host, user, key, f"cat {config_path} 2>/dev/null")
+            cfg_out, _ = run_ssh(host, user, key, f"cat {config_path} 2>/dev/null", password=password, port=port)
             if cfg_out:
                 for line in cfg_out.split('\n'):
                     if 'transport' in line and '=' in line:
@@ -206,7 +213,7 @@ def get_tunnels_from_server(srv):
                 except:
                     pass
         else:
-            cron_out, _ = run_ssh(host, user, key, f"cat {cron_conf} 2>/dev/null | grep INTERVAL")
+            cron_out, _ = run_ssh(host, user, key, f"cat {cron_conf} 2>/dev/null | grep INTERVAL", password=password, port=port)
             if cron_out:
                 cron_interval = cron_out.split("=")[1].strip() if "=" in cron_out else ""
                 cron_active = bool(cron_interval)
@@ -231,10 +238,12 @@ def remote_exec(srv, cmd, timeout=30):
     host = srv.get("ip", "127.0.0.1")
     user = srv.get("ssh_user", "root")
     key = srv.get("ssh_key", "")
+    password = srv.get("ssh_password", "")
+    port = srv.get("ssh_port", 22)
     is_local = host in ["127.0.0.1", "localhost", get_local_ip()]
     if is_local:
         return run_cmd(cmd, timeout)
-    return run_ssh(host, user, key, cmd, timeout)
+    return run_ssh(host, user, key, cmd, timeout, password=password, port=port)
 
 def create_tunnel_on_server(srv, params):
     role = params.get("role", srv.get("role", "iran"))
@@ -318,8 +327,10 @@ def create_tunnel_on_server(srv, params):
         host = srv["ip"]
         user = srv.get("ssh_user", "root")
         key = srv.get("ssh_key", "")
+        password = srv.get("ssh_password", "")
+        ssh_port = srv.get("ssh_port", 22)
         escaped = config_content.replace("'", "'\\''")
-        run_ssh(host, user, key, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << 'ENDOFFILE'\n{config_content}ENDOFFILE")
+        run_ssh(host, user, key, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << 'ENDOFFILE'\n{config_content}ENDOFFILE", password=password, port=ssh_port)
 
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
@@ -347,7 +358,9 @@ WantedBy=multi-user.target
         host = srv["ip"]
         user = srv.get("ssh_user", "root")
         key = srv.get("ssh_key", "")
-        run_ssh(host, user, key, f"cat > {service_file} << 'ENDOFFILE'\n{service_content}ENDOFFILE")
+        password = srv.get("ssh_password", "")
+        ssh_port = srv.get("ssh_port", 22)
+        run_ssh(host, user, key, f"cat > {service_file} << 'ENDOFFILE'\n{service_content}ENDOFFILE", password=password, port=ssh_port)
 
     remote_exec(srv, "systemctl daemon-reload")
     remote_exec(srv, f"systemctl enable {svc_name} 2>/dev/null")
@@ -545,6 +558,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 "ip": data.get("ip", ""),
                 "role": data.get("role", "iran"),
                 "ssh_user": data.get("ssh_user", "root"),
+                "ssh_password": data.get("ssh_password", ""),
+                "ssh_port": data.get("ssh_port", 22),
                 "ssh_key": data.get("ssh_key", "")
             }
             servers_data["servers"].append(server_entry)
@@ -561,6 +576,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                     srv["ip"] = data.get("ip", srv.get("ip"))
                     srv["role"] = data.get("role", srv.get("role"))
                     srv["ssh_user"] = data.get("ssh_user", srv.get("ssh_user"))
+                    srv["ssh_password"] = data.get("ssh_password", srv.get("ssh_password", ""))
+                    srv["ssh_port"] = data.get("ssh_port", srv.get("ssh_port", 22))
                     srv["ssh_key"] = data.get("ssh_key", srv.get("ssh_key"))
                     break
             save_servers(servers_data)
@@ -579,12 +596,14 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             host = data.get("ip", "")
             user = data.get("ssh_user", "root")
             key = data.get("ssh_key", "")
+            password = data.get("ssh_password", "")
+            port = data.get("ssh_port", 22)
             is_local = host in ["127.0.0.1", "localhost", ""]
             if is_local:
                 out, code = run_cmd("hostname && echo 'SSH_OK'")
                 self.send_json({"success": code == 0, "output": out})
             else:
-                out, code = run_ssh(host, user, key, "hostname && echo SSH_OK", timeout=10)
+                out, code = run_ssh(host, user, key, "hostname && echo SSH_OK", timeout=10, password=password, port=port)
                 self.send_json({"success": "SSH_OK" in out, "output": out})
             return
 
@@ -703,7 +722,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                         with open(config_path, 'w') as f:
                             f.write(config)
                     else:
-                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), f"cat > {config_path} << 'ENDOFFILE'\n{config}ENDOFFILE")
+                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), f"cat > {config_path} << 'ENDOFFILE'\n{config}ENDOFFILE", password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
                     remote_exec(srv, f"systemctl restart {svc}")
                     self.send_json({"success": True})
                 else:
@@ -769,7 +788,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0a0e1
 </head>
 <body>
 <div class="login-container">
-<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.2.0</p></div>
+<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.3.0</p></div>
 <div class="error-msg" id="error"></div>
 <form onsubmit="doLogin(event)">
 <div class="form-group"><label>Username</label><input type="text" id="username" placeholder="admin" autocomplete="username" required></div>
@@ -905,7 +924,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Multi-Server Panel v2.1.0</div>
+<div class="topbar-badge">Multi-Server Panel v2.3.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1006,6 +1025,10 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 </div>
 <div class="form-row">
 <div class="form-group"><label>SSH User</label><input id="srv-ssh-user" value="root"></div>
+<div class="form-group"><label>SSH Port</label><input id="srv-ssh-port" value="22" type="number"></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>SSH Password</label><input id="srv-ssh-password" type="password" placeholder="Enter SSH password"></div>
 <div class="form-group"><label>SSH Key Path (optional)</label><input id="srv-ssh-key" placeholder="/root/.ssh/id_rsa"><small style="color:var(--text3);font-size:11px">Leave empty for password auth</small></div>
 </div>
 </div>
@@ -1100,6 +1123,8 @@ return `<div class="server-card ${roleClass}">
 <div class="server-stats">
 <div class="server-stat"><div class="label">IP</div><div class="value" style="color:var(--cyan)">${s.ip}</div></div>
 <div class="server-stat"><div class="label">SSH User</div><div class="value">${s.ssh_user}</div></div>
+<div class="server-stat"><div class="label">SSH Port</div><div class="value">${s.ssh_port||22}</div></div>
+<div class="server-stat"><div class="label">Auth</div><div class="value">${s.ssh_password?"Password":"Key"}</div></div>
 </div>
 <div class="server-card-actions">
 <button onclick="installBinary('${s.id}')">Install Binary</button>
@@ -1256,9 +1281,9 @@ editingServerId=editId||"";
 document.getElementById("server-modal-title").textContent=editId?"Edit Server":"Add Server";
 if(editId){
 const s=servers.find(x=>x.id===editId);
-if(s){document.getElementById("srv-name").value=s.name;document.getElementById("srv-ip").value=s.ip;document.getElementById("srv-role").value=s.role;document.getElementById("srv-ssh-user").value=s.ssh_user;document.getElementById("srv-ssh-key").value=s.ssh_key||""}
+if(s){document.getElementById("srv-name").value=s.name;document.getElementById("srv-ip").value=s.ip;document.getElementById("srv-role").value=s.role;document.getElementById("srv-ssh-user").value=s.ssh_user;document.getElementById("srv-ssh-port").value=s.ssh_port||22;document.getElementById("srv-ssh-password").value=s.ssh_password||"";document.getElementById("srv-ssh-key").value=s.ssh_key||""}
 }else{
-document.getElementById("srv-name").value="";document.getElementById("srv-ip").value="";document.getElementById("srv-role").value="iran";document.getElementById("srv-ssh-user").value="root";document.getElementById("srv-ssh-key").value=""
+document.getElementById("srv-name").value="";document.getElementById("srv-ip").value="";document.getElementById("srv-role").value="iran";document.getElementById("srv-ssh-user").value="root";document.getElementById("srv-ssh-port").value="22";document.getElementById("srv-ssh-password").value="";document.getElementById("srv-ssh-key").value=""
 }
 document.getElementById("modal-add-server").classList.add("show");
 }
@@ -1266,10 +1291,10 @@ document.getElementById("modal-add-server").classList.add("show");
 function editServer(id){showAddServer(id)}
 
 async function saveServer(){
-const params={name:document.getElementById("srv-name").value,ip:document.getElementById("srv-ip").value,role:document.getElementById("srv-role").value,ssh_user:document.getElementById("srv-ssh-user").value,ssh_key:document.getElementById("srv-ssh-key").value};
+const params={name:document.getElementById("srv-name").value,ip:document.getElementById("srv-ip").value,role:document.getElementById("srv-role").value,ssh_user:document.getElementById("srv-ssh-user").value,ssh_password:document.getElementById("srv-ssh-password").value,ssh_port:parseInt(document.getElementById("srv-ssh-port").value)||22,ssh_key:document.getElementById("srv-ssh-key").value};
 if(!params.name||!params.ip){showToast("Name and IP required","error");return}
 showToast("Testing connection...","info");
-const test=await api("/api/server/test",{ip:params.ip,ssh_user:params.ssh_user,ssh_key:params.ssh_key});
+const test=await api("/api/server/test",{ip:params.ip,ssh_user:params.ssh_user,ssh_password:params.ssh_password,ssh_port:params.ssh_port,ssh_key:params.ssh_key});
 if(!test||!test.success){showToast("Cannot connect to server. Check IP and SSH.","error");return}
 if(editingServerId){params.id=editingServerId;await api("/api/server/update",params)}
 else{await api("/api/server/add",params)}
@@ -1310,7 +1335,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.1.0")
+    print("  BackhaulManager Web Panel v2.3.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
