@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.2
+Version: 2.4.3
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -373,7 +373,8 @@ def create_tunnel_on_server(srv, params):
                 "success": False,
                 "error": f"Failed to extract Backhaul archive on {srv.get('name') or srv.get('ip')}: {out2}"
             }
-        remote_exec(srv, f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY}")
+        remote_exec(srv, f"cp /tmp/backhaul {BINARY}")
+        remote_exec(srv, f"chmod +x {BINARY}")
         remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
 
     if transport == "wssmux":
@@ -382,7 +383,9 @@ def create_tunnel_on_server(srv, params):
         if cert_check != "ok":
             remote_exec(srv, f'openssl req -x509 -newkey rsa:2048 -keyout {CERT_DIR}/wssmux.key -out {CERT_DIR}/wssmux.crt -days 3650 -nodes -subj "/CN=backhaul-wssmux" 2>/dev/null')
 
-    remote_exec(srv, f"test -f {config_file} && cp {config_file} {BACKUP_DIR}/$(basename {config_file}).bak.$(date +%Y%m%d-%H%M%S) 2>/dev/null")
+    check_cfg, _ = remote_exec(srv, f"test -f {config_file} && echo yes")
+    if check_cfg.strip() == "yes":
+        remote_exec(srv, f"cp {config_file} {BACKUP_DIR}/$(basename {config_file}).bak.$(date +%Y%m%d-%H%M%S)")
 
     if role == "iran":
         config_lines = [
@@ -1047,7 +1050,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if c2 != 0:
                 self.send_json({"success": False, "error": f"Extraction failed: {out2}"})
                 return
-            remote_exec(srv, f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY}")
+            remote_exec(srv, f"cp /tmp/backhaul {BINARY}")
+            remote_exec(srv, f"chmod +x {BINARY}")
             remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
             ver = get_binary_version(srv.get("ip"), srv.get("ssh_user"), srv.get("ssh_key"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
             self.send_json({"success": True, "version": ver, "used_mirror": used_mirror})
@@ -1273,7 +1277,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.2</div>
+<div class="topbar-badge">Premium v2.4.3</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1924,7 +1928,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.2")
+    print("  BackhaulManager Web Panel v2.4.3")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
