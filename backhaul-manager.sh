@@ -250,7 +250,7 @@ ask_server_role() {
         echo -e "  ${DIM}This setting applies to all tunnel operations in this session.${NC}\n"
         echo -e "  ${WHITE}[1]${NC} ${LGREEN}IRAN${NC}          — Server inside Iran   ${DIM}(acts as listener / server side)${NC}"
         echo -e "  ${WHITE}[2]${NC} ${LBLUE}KHAREJ${NC}        — Server outside Iran  ${DIM}(acts as connector / client side)${NC}"
-        echo -e "  ${WHITE}[3]${NC} ${LYELLOW}UPDATE SCRIPT${NC} — آپدیت اسکریپت ${DIM}(Get latest version)${NC}"
+        echo -e "  ${WHITE}[3]${NC} ${LYELLOW}UPDATE SCRIPT${NC} — Update this script ${DIM}(Get latest version)${NC}"
 
         if [[ "$auto_role" != "unknown" ]]; then
             echo -e "\n  ${DIM}  Auto-detected from existing services: ${LYELLOW}${auto_role}${NC}"
