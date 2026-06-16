@@ -170,10 +170,11 @@ LOGO
 
 update_script() {
     info "Checking for script updates..."
+    local ts; ts=$(date +%s)
     local urls=(
-        "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh"
-        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh"
-        "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh"
+        "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
+        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
+        "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
     )
     local temp_file="/tmp/backhaul-manager-update.sh"
     local running_script; running_script=$(readlink -f "$0")
@@ -2349,10 +2350,11 @@ SERVICE
             _install_webpanel_deps
 
             # Download from GitHub
+            local ts; ts=$(date +%s)
             local urls=(
-                "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
-                "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
-                "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
+                "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
+                "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
+                "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
             )
             local success=false
             local url_index=0
