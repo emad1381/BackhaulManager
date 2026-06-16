@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.5
+Version: 2.4.6
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -445,9 +445,10 @@ def create_tunnel_on_server(srv, params):
         key = srv.get("ssh_key", "")
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
-        escaped = config_content.replace("'", "'\\''")
         delim = f"DELIM_{secrets.token_hex(8)}"
-        run_ssh(host, user, key, sudo_cmd(user, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << '{delim}'\n{config_content}{delim}"), password=password, port=ssh_port)
+        remote_exec(srv, f"mkdir -p {INSTALL_DIR}")
+        cmd_write = f"cat << '{delim}' | {sudo_cmd(user, f'tee {config_file} >/dev/null')}\n{config_content}{delim}"
+        run_ssh(host, user, key, cmd_write, password=password, port=ssh_port)
 
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
@@ -478,7 +479,8 @@ WantedBy=multi-user.target
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
         delim = f"DELIM_{secrets.token_hex(8)}"
-        run_ssh(host, user, key, sudo_cmd(user, f"cat > {service_file} << '{delim}'\n{service_content}{delim}"), password=password, port=ssh_port)
+        cmd_write_svc = f"cat << '{delim}' | {sudo_cmd(user, f'tee {service_file} >/dev/null')}\n{service_content}{delim}"
+        run_ssh(host, user, key, cmd_write_svc, password=password, port=ssh_port)
 
     remote_exec(srv, "systemctl daemon-reload")
     remote_exec(srv, f"systemctl enable {svc_name} 2>/dev/null")
@@ -1017,7 +1019,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                             f.write(config)
                     else:
                         delim = f"DELIM_{secrets.token_hex(8)}"
-                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), sudo_cmd(srv.get("ssh_user", "root"), f"cat > {config_path} << '{delim}'\n{config}{delim}"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
+                        ssh_user = srv.get("ssh_user", "root")
+                        cmd_write = f"cat << '{delim}' | {sudo_cmd(ssh_user, f'tee {config_path} >/dev/null')}\n{config}{delim}"
+                        run_ssh(host, ssh_user, srv.get("ssh_key", ""), cmd_write, password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
                     remote_exec(srv, f"systemctl restart {svc}")
                     self.send_json({"success": True})
                 else:
@@ -1290,7 +1294,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.5</div>
+<div class="topbar-badge">Premium v2.4.6</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1941,7 +1945,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.5")
+    print("  BackhaulManager Web Panel v2.4.6")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
