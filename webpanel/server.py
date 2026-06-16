@@ -57,7 +57,13 @@ def run_cmd(cmd, timeout=30):
         return str(e), 1
 
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
-    ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-p", str(port)]
+    if user != "root" and cmd.startswith("sudo "):
+        if password:
+            cmd = f"echo '{password}' | sudo -S {cmd[5:]}"
+        else:
+            cmd = f"sudo -n {cmd[5:]}"
+
+    ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5", "-p", str(port)]
     if password:
         sshpass_check, _ = run_cmd("which sshpass")
         if not sshpass_check:
@@ -653,11 +659,40 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             port = data.get("ssh_port", 22)
             is_local = host in ["127.0.0.1", "localhost", ""]
             if is_local:
-                out, code = run_cmd("hostname && echo 'SSH_OK'")
+                out, code = run_cmd("hostname && echo 'SSH_OK'", timeout=5)
                 self.send_json({"success": code == 0, "output": out})
             else:
-                out, code = run_ssh(host, user, key, sudo_cmd(user, "hostname && echo SSH_OK"), timeout=10, password=password, port=port)
+                out, code = run_ssh(host, user, key, sudo_cmd(user, "hostname && echo SSH_OK"), timeout=5, password=password, port=port)
                 self.send_json({"success": "SSH_OK" in out, "output": out})
+            return
+
+        if path == "/api/tunnel/ping":
+            server_id = data.get("server_id", "")
+            target_ip = data.get("target_ip", "")
+            if not server_id or not target_ip:
+                self.send_json({"error": "missing params"}, 400)
+                return
+            data_servers = load_servers()
+            srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
+            if srv:
+                out, code = remote_exec(srv, f"ping -c 4 -W 2 {target_ip}", timeout=15)
+                # Parse ping output
+                loss = "Unknown"
+                avg = "Unknown"
+                for line in out.split('\\n'):
+                    if "packet loss" in line:
+                        parts = line.split(',')
+                        for p in parts:
+                            if "packet loss" in p:
+                                loss = p.strip().split(' ')[0]
+                    elif line.startswith("rtt min/avg/max/mdev") or line.startswith("round-trip min/avg/max/stddev"):
+                        try:
+                            avg = line.split('=')[1].split('/')[1] + " ms"
+                        except:
+                            pass
+                self.send_json({"success": True, "output": out, "loss": loss, "avg": avg})
+            else:
+                self.send_json({"error": "server not found"}, 404)
             return
 
         if path == "/api/tunnel/action":
@@ -1293,6 +1328,7 @@ return `<div class="tunnel-item">
 <button class="icon-btn start" title="Start" onclick="tunnelAction('start','${t.service}','${t.server_id}')">▶</button>
 <button class="icon-btn stop" title="Stop" onclick="tunnelAction('stop','${t.service}','${t.server_id}')">⏹</button>
 <button class="icon-btn restart" title="Restart" onclick="tunnelAction('restart','${t.service}','${t.server_id}')">🔄</button>
+<button class="icon-btn ping" title="Live Ping" onclick="doPing('${t.service}','${t.server_id}','${t.bind_addr}')">🏓</button>
 <button class="icon-btn" title="Logs" onclick="showLogs('${t.service}','${t.server_id}')">📄</button>
 <button class="icon-btn" title="Edit Config" onclick="showConfig('${t.service}','${t.server_id}')">✏️</button>
 <button class="icon-btn" title="Auto Restart" onclick="showCron('${t.service}','${t.server_id}',${t.cron_active},'${t.cron_interval}')">⏱</button>
@@ -1359,6 +1395,20 @@ async function doDelete(svc,server_id){
 if(!confirm("Are you sure you want to permanently delete "+svc+"?"))return;
 await api("/api/tunnel/delete",{service:svc,server_id:server_id});
 showToast(svc+" deleted","success");refreshAll();
+}
+
+async function doPing(svc, server_id, bind_addr) {
+const targetIp = bind_addr.split(":")[0];
+if (!targetIp || targetIp === "0.0.0.0") {
+showToast("Target IP not valid for ping test.", "error"); return;
+}
+showToast("Testing connection to " + targetIp + "...", "info");
+const d = await api("/api/tunnel/ping", {server_id: server_id, target_ip: targetIp});
+if (d && d.success) {
+showToast(`Ping: ${d.avg} | Loss: ${d.loss}`, "success");
+} else {
+showToast("Ping test failed.", "error");
+}
 }
 
 async function showLogs(svc,server_id){
