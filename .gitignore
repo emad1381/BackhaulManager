@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# BackhaulManager data files
+webpanel/servers.json
+webpanel/settings.json
+webpanel/*.log
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store

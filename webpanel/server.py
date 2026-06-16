@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.3.0
+Version: 2.4.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -933,7 +933,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 .container { max-width: 1400px; margin: 0 auto; padding: 32px; }
 
 /* Tabs */
-.tabs { display: flex; gap: 8px; padding: 6px; background: rgba(15,15,15,0.6); backdrop-filter: blur(10px); border-radius: 16px; margin-bottom: 32px; border: 1px solid var(--border); width: fit-content; }
+.tabs { display: flex; gap: 8px; padding: 6px; background: rgba(15,15,15,0.6); backdrop-filter: blur(10px); border-radius: 16px; margin-bottom: 32px; border: 1px solid var(--border); width: fit-content; margin-left: auto; margin-right: auto; }
 .tab { padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-muted); transition: all 0.3s; border: none; background: transparent; display: flex; align-items: center; gap: 8px; }
 .tab:hover { color: #fff; background: rgba(255,255,255,0.05); }
 .tab.active { background: linear-gradient(135deg, var(--primary), #3b82f6); color: white; box-shadow: 0 8px 20px rgba(6,182,212,0.3); }
@@ -1007,7 +1007,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 .icon-btn.delete { color: var(--danger); border-color: rgba(239,68,68,0.2); } .icon-btn.delete:hover { background: rgba(239,68,68,0.1); box-shadow: 0 4px 12px rgba(239,68,68,0.2); }
 
 /* Empty States */
-.empty { text-align: center; padding: 60px 20px; color: var(--text-dark); }
+.empty { text-align: center; padding: 60px 20px; color: var(--text-dark); grid-column: 1 / -1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .empty .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 
 /* Modals */
@@ -1066,7 +1066,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.3.0</div>
+<div class="topbar-badge">Premium v2.4.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1527,7 +1527,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.3.0")
+    print("  BackhaulManager Web Panel v2.4.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
