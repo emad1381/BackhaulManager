@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.3.0
+#  Version : 1.3.1
 #  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
@@ -171,7 +171,7 @@ LOGO
 ask_server_role() {
     clear
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.0 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.1 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
     # Try auto-detect first
@@ -221,7 +221,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.0 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.1 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2114,18 +2114,18 @@ menu_webpanel() {
             if [[ -n "$port_pid" ]]; then
                 info "Killing old process (PID: $port_pid)..."
                 kill -9 "$port_pid" 2>/dev/null
-                sleep 1
+                sleep 2
             fi
             # Method 2: kill by port using fuser
-            fuser -k "${WEBPANEL_PORT}/tcp" 2>/dev/null
-            sleep 1
+            fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+            sleep 2
             # Method 3: kill any python server.py processes
             pkill -9 -f "server.py" 2>/dev/null
-            sleep 1
+            sleep 3
             # Verify port is free
             if ss -tlnp 2>/dev/null | grep -q ":${WEBPANEL_PORT} "; then
-                warn "Port $WEBPANEL_PORT still in use. Waiting..."
-                sleep 3
+                warn "Port $WEBPANEL_PORT still in use. Waiting 5 more seconds..."
+                sleep 5
             fi
 
             info "Starting Web Panel on port $WEBPANEL_PORT..."

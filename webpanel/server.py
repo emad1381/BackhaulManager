@@ -1295,6 +1295,7 @@ if __name__ == "__main__":
     os.makedirs(PANEL_DIR, exist_ok=True)
 
     server = http.server.HTTPServer(("0.0.0.0", PORT), PanelHandler)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     local_ip = get_local_ip()
     print("")
     print("  BackhaulManager Web Panel v2.1.0")
