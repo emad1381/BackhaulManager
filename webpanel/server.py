@@ -303,6 +303,21 @@ def create_tunnel_on_server(srv, params):
 
     remote_exec(srv, f"mkdir -p {INSTALL_DIR} {BACKUP_DIR}")
 
+    # Auto-install binary if it doesn't exist or is not executable on target
+    binary_check, _ = remote_exec(srv, f"test -x {BINARY} && echo ok")
+    if binary_check.strip() != "ok":
+        arch_out, _ = remote_exec(srv, "uname -m")
+        arch = arch_out.strip()
+        if "aarch64" in arch or "arm64" in arch:
+            asset = "backhaul_linux_arm64.tar.gz"
+        else:
+            asset = "backhaul_linux_amd64.tar.gz"
+        url = f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
+        remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
+        remote_exec(srv, f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
+        remote_exec(srv, f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY}")
+        remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
+
     if transport == "wssmux":
         remote_exec(srv, f"mkdir -p {CERT_DIR}")
         cert_check, _ = remote_exec(srv, f"test -f {CERT_DIR}/wssmux.crt && echo ok")
@@ -791,13 +806,31 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/tunnel/create":
-            result = create_tunnel_on_server(data.get("server", {}), data)
+            data_servers = load_servers()
+            servers_list = data_servers.get("servers", [])
+            srv_id = data.get("server", {}).get("id")
+            srv = next((s for s in servers_list if s.get("id") == srv_id), None)
+            if not srv:
+                self.send_json({"error": "server not found"}, 404)
+                return
+            result = create_tunnel_on_server(srv, data)
             self.send_json(result)
             return
 
         if path == "/api/tunnel/create-both":
-            iran_srv = data.get("iran_server", {})
-            kharej_srv = data.get("kharej_server", {})
+            data_servers = load_servers()
+            servers_list = data_servers.get("servers", [])
+            
+            iran_srv_id = data.get("iran_server", {}).get("id")
+            kharej_srv_id = data.get("kharej_server", {}).get("id")
+            
+            iran_srv = next((s for s in servers_list if s.get("id") == iran_srv_id), None)
+            kharej_srv = next((s for s in servers_list if s.get("id") == kharej_srv_id), None)
+            
+            if not iran_srv or not kharej_srv:
+                self.send_json({"error": "server not found"}, 404)
+                return
+
             transport = data.get("transport", "wssmux")
             port = data.get("port", "9743")
             token = data.get("token", "")
