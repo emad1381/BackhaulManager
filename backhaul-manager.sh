@@ -2049,6 +2049,163 @@ menu_manage_tunnels() {
     done
 }
 
+# ─── WEB PANEL ────────────────────────────────────────────────────────────────
+WEBPANEL_PORT=54321
+WEBPANEL_DIR="$INSTALL_DIR/webpanel"
+WEBPANEL_SCRIPT="$WEBPANEL_DIR/server.py"
+
+menu_webpanel() {
+    section "Web Panel"
+
+    echo -e "  ${BOLD}${WHITE}BackhaulManager Web Panel${NC}"
+    echo -e "  ${DIM}Beautiful web interface to manage your tunnels${NC}"
+    separator
+
+    local ip; ip=$(get_local_ip)
+
+    # Check if webpanel is already running
+    local running_pid=""
+    if pgrep -f "python3.*server.py.*$WEBPANEL_PORT" >/dev/null 2>&1; then
+        running_pid=$(pgrep -f "python3.*server.py.*$WEBPANEL_PORT" | head -1)
+    fi
+
+    if [[ -n "$running_pid" ]]; then
+        echo -e "  ${OK} ${LGREEN}Web Panel is RUNNING${NC}"
+        echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+        echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+        echo -e "  ${BULLET} PID     : ${DIM}${running_pid}${NC}"
+    else
+        echo -e "  ${WARN} ${YELLOW}Web Panel is NOT running${NC}"
+    fi
+
+    separator
+    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Start${NC} Web Panel"
+    echo -e "  ${WHITE}[2]${NC} ${RED}Stop${NC}  Web Panel"
+    echo -e "  ${WHITE}[3]${NC} ${LCYAN}Start${NC} on boot (systemd service)"
+    echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel files"
+    echo -e "  ${WHITE}[0]${NC} Back"
+    separator
+    prompt "Choice:"; read -r wp_choice
+
+    case "$wp_choice" in
+        1)
+            if [[ -n "$running_pid" ]]; then
+                warn "Web Panel is already running."
+                press_enter; return
+            fi
+
+            # Check python3
+            if ! command -v python3 &>/dev/null; then
+                warn "python3 not found. Please install python3 first."
+                press_enter; return
+            fi
+
+            # Check if webpanel files exist
+            if [[ ! -f "$WEBPANEL_SCRIPT" ]]; then
+                warn "Web Panel files not found. Please install first (option 4)."
+                press_enter; return
+            fi
+
+            info "Starting Web Panel on port $WEBPANEL_PORT..."
+            mkdir -p "$INSTALL_DIR" "$WEBPANEL_DIR"
+            nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
+            sleep 2
+
+            if pgrep -f "python3.*server.py.*$WEBPANEL_PORT" >/dev/null 2>&1; then
+                success "Web Panel started!"
+                echo ""
+                echo -e "  ${BOLD}${LGREEN}  ╔══════════════════════════════════════════════════════╗${NC}"
+                echo -e "  ${BOLD}${LGREEN}  ║           Web Panel is LIVE!                        ║${NC}"
+                echo -e "  ${BOLD}${LGREEN}  ╚══════════════════════════════════════════════════════╝${NC}"
+                echo ""
+                echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                echo ""
+            else
+                warn "Failed to start Web Panel. Check logs:"
+                tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null
+            fi
+            press_enter
+            ;;
+        2)
+            if [[ -n "$running_pid" ]]; then
+                kill "$running_pid" 2>/dev/null
+                pkill -f "python3.*server.py.*$WEBPANEL_PORT" 2>/dev/null
+                sleep 1
+                success "Web Panel stopped."
+            else
+                info "Web Panel is not running."
+            fi
+            press_enter
+            ;;
+        3)
+            info "Creating systemd service for Web Panel..."
+            cat > "$SERVICE_DIR/backhaul-webpanel.service" <<SERVICE
+[Unit]
+Description=BackhaulManager Web Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$WEBPANEL_DIR
+ExecStart=$(command -v python3) $WEBPANEL_SCRIPT
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+            systemctl daemon-reload
+            systemctl enable backhaul-webpanel 2>/dev/null
+            systemctl restart backhaul-webpanel
+            sleep 2
+
+            if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                success "Web Panel service installed and started!"
+                echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                echo -e "  ${BULLET} Service : ${DIM}backhaul-webpanel.service${NC}"
+                echo -e "  ${BULLET} Auto-start on boot: ${LGREEN}enabled${NC}"
+            else
+                warn "Service created but failed to start. Check: journalctl -u backhaul-webpanel"
+            fi
+            press_enter
+            ;;
+        4)
+            info "Installing Web Panel files..."
+            mkdir -p "$WEBPANEL_DIR"
+
+            # Download from GitHub
+            local raw_url="https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py"
+            info "Downloading from: $raw_url"
+
+            if command -v wget &>/dev/null; then
+                wget -q -O "$WEBPANEL_SCRIPT" "$raw_url" 2>/dev/null
+            elif command -v curl &>/dev/null; then
+                curl -sL -o "$WEBPANEL_SCRIPT" "$raw_url" 2>/dev/null
+            else
+                warn "Neither wget nor curl found."
+                press_enter; return
+            fi
+
+            if [[ -f "$WEBPANEL_SCRIPT" ]] && [[ -s "$WEBPANEL_SCRIPT" ]]; then
+                chmod +x "$WEBPANEL_SCRIPT"
+                success "Web Panel installed: $WEBPANEL_SCRIPT"
+                echo -e "  ${BULLET} Port    : ${CYAN}$WEBPANEL_PORT${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+            else
+                warn "Download failed. Please check your internet connection."
+            fi
+            press_enter
+            ;;
+        0) return ;;
+        *) warn "Invalid choice"; press_enter ;;
+    esac
+}
+
 # ─── MAIN MENU ───────────────────────────────────────────────────────────────
 main_menu() {
     while true; do
@@ -2058,11 +2215,13 @@ main_menu() {
         echo -e "  ${LGREEN}[1]${NC}  Create New Tunnel"
         echo -e "  ${LCYAN}[2]${NC}  Manage Tunnels"
         echo -e "            ${DIM}(start / stop / restart / logs / edit / delete)${NC}"
-        echo -e "  ${MAGENTA}[3]${NC}  Backup & Restore Configs"
-        echo -e "  ${MAGENTA}[4]${NC}  Firewall Helper"
-        echo -e "  ${LCYAN}[5]${NC}  Two-Way Link Test"
-        echo -e "  ${GRAY}[6]${NC}  System Info"
-        echo -e "  ${GRAY}[7]${NC}  Install / Update Binary"
+        echo -e "  ${LMAGENTA}[3]${NC}  Web Panel"
+        echo -e "            ${DIM}(install & run web interface on port 54321)${NC}"
+        echo -e "  ${MAGENTA}[4]${NC}  Backup & Restore Configs"
+        echo -e "  ${MAGENTA}[5]${NC}  Firewall Helper"
+        echo -e "  ${LCYAN}[6]${NC}  Two-Way Link Test"
+        echo -e "  ${GRAY}[7]${NC}  System Info"
+        echo -e "  ${GRAY}[8]${NC}  Install / Update Binary"
         echo -e "  ${RED}[0]${NC}  Exit"
         separator
         prompt "Choice:"; read -r main_choice
@@ -2070,11 +2229,12 @@ main_menu() {
         case "$main_choice" in
             1) menu_create_tunnel ;;
             2) menu_manage_tunnels ;;
-            3) menu_backup ;;
-            4) menu_firewall ;;
-            5) menu_link_test ;;
-            6) menu_info ;;
-            7) menu_install ;;
+            3) menu_webpanel ;;
+            4) menu_backup ;;
+            5) menu_firewall ;;
+            6) menu_link_test ;;
+            7) menu_info ;;
+            8) menu_install ;;
             0)
                 echo -e "\n${DIM}Bye!${NC}\n"
                 exit 0

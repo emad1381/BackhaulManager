@@ -17,6 +17,7 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 - Built-in two-way link test for ping and TCP reachability checks
 - WSSMUX TLS certificate generation with OpenSSL
 - **Auto-restart via cron** — schedule periodic tunnel restarts to clear cache and maintain speed
+- **Web Panel** — beautiful web interface to manage tunnels from your browser
 
 ## Requirements
 
@@ -69,6 +70,26 @@ Schedule periodic tunnel restarts to clear cache and maintain optimal speed:
 3. The cron job will automatically restart the tunnel at the specified interval
 
 **Note:** The tunnel will briefly disconnect during restart. This is normal behavior.
+
+## Web Panel
+
+Beautiful web interface to manage your tunnels from any browser:
+
+1. Run the script and select **[3] Web Panel**
+2. Choose **[4] Install / Update** to download the web panel files
+3. Choose **[1] Start** to launch the panel
+4. Open `http://YOUR_SERVER_IP:54321` in your browser
+5. Login with `admin` / `admin`
+
+**Features:**
+- Dashboard with server status and tunnel overview
+- Create, start, stop, restart, and delete tunnels
+- View live logs and edit config files
+- Schedule auto-restart (cron) for each tunnel
+- Install/update Backhaul binary
+- Responsive design works on mobile too
+
+To run as a service (auto-start on boot), select **[3] Start on boot**.
 
 ## Notes
 
