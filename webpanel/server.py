@@ -312,9 +312,28 @@ def create_tunnel_on_server(srv, params):
             asset = "backhaul_linux_arm64.tar.gz"
         else:
             asset = "backhaul_linux_amd64.tar.gz"
-        url = f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
-        remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
-        remote_exec(srv, f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
+        urls = [
+            f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+            f"https://mirror.ghproxy.com/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+            f"https://ghproxy.net/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
+        ]
+        c1 = 1
+        out1 = "No download attempt made"
+        for url in urls:
+            out1, c1 = remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
+            if c1 == 0:
+                break
+        if c1 != 0:
+            return {
+                "success": False,
+                "error": f"Failed to download Backhaul binary on {srv.get('name') or srv.get('ip')}: {out1}"
+            }
+        out2, c2 = remote_exec(srv, f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
+        if c2 != 0:
+            return {
+                "success": False,
+                "error": f"Failed to extract Backhaul archive on {srv.get('name') or srv.get('ip')}: {out2}"
+            }
         remote_exec(srv, f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY}")
         remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
 
@@ -923,14 +942,26 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 asset = "backhaul_linux_arm64.tar.gz"
             else:
                 asset = "backhaul_linux_amd64.tar.gz"
-            url = f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
+            urls = [
+                f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+                f"https://mirror.ghproxy.com/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+                f"https://ghproxy.net/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
+            ]
             remote_exec(srv, f"mkdir -p {INSTALL_DIR} {BACKUP_DIR}")
             remote_exec(srv, f"cp {BINARY} {BACKUP_DIR}/backhaul.bak.$(date +%Y%m%d-%H%M%S) 2>/dev/null")
-            out1, c1 = remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
+            c1 = 1
+            out1 = "No download attempt made"
+            for url in urls:
+                out1, c1 = remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
+                if c1 == 0:
+                    break
             if c1 != 0:
                 self.send_json({"success": False, "error": f"Download failed: {out1}"})
                 return
             out2, c2 = remote_exec(srv, f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
+            if c2 != 0:
+                self.send_json({"success": False, "error": f"Extraction failed: {out2}"})
+                return
             remote_exec(srv, f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY}")
             remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
             ver = get_binary_version(srv.get("ip"), srv.get("ssh_user"), srv.get("ssh_key"))
@@ -1544,8 +1575,12 @@ dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-b
 <div style="margin-top:24px"><button class="btn btn-primary" onclick="wizardNext(1)" style="width:100%">Create Another Tunnel</button></div></div>`;
 showToast("Tunnel deployed successfully!","success");refreshAll();
 }else{
+let errDetails = "";
+if(r && r.iran && r.iran.error) errDetails += `<div style="color:var(--danger);font-family:monospace;margin-top:10px;font-size:12px;text-align:left;">Iran Node: ${r.iran.error}</div>`;
+if(r && r.kharej && r.kharej.error) errDetails += `<div style="color:var(--danger);font-family:monospace;margin-top:10px;font-size:12px;text-align:left;">Kharej Node: ${r.kharej.error}</div>`;
 dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(239,68,68,0.5)">❌</div><div style="font-size:20px;font-weight:600;color:var(--danger)">Deployment Failed</div>
 <div style="margin-top:12px;font-size:14px;color:var(--text-muted)">Please check SSH connectivity and firewall settings.</div>
+${errDetails}
 <div style="margin-top:24px"><button class="btn btn-outline" onclick="wizardNext(1)" style="width:100%">Try Again</button></div></div>`;
 showToast("Tunnel creation failed","error");
 }
@@ -1656,7 +1691,7 @@ if(!confirm("Deploy the latest Backhaul binary to this node?"))return;
 showToast("Downloading and installing...","info");
 const r=await api("/api/install/binary",{server_id:server_id});
 if(r&&r.success){showToast("Successfully deployed: "+r.version,"success");loadServers()}
-else{showToast("Installation failed","error")}
+else{showToast("Installation failed: "+(r?r.error||"Unknown error":"Connection failed"),"error")}
 }
 
 async function loadCurrentSettings(){
