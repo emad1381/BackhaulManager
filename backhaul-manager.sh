@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.1.0
-#  Author  : @B3hnamR
+#  Version : 1.2.0
+#  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
 # =============================================================================
@@ -45,6 +45,7 @@ press_enter(){ echo -e "\n${DIM}Press [Enter] to continue...${NC}"; read -r; }
 
 require_root() {
     [[ $EUID -eq 0 ]] || die "This script must be run as root."
+    mkdir -p "$CRON_CONFIG_DIR" 2>/dev/null || true
 }
 
 check_binary() {
@@ -170,7 +171,7 @@ LOGO
 ask_server_role() {
     clear
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.1.0 by ${NC}${CYAN}@B3hnamR${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.2.0 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
     # Try auto-detect first
@@ -220,7 +221,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.1.0 by ${NC}${CYAN}@B3hnamR${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.2.0 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -1094,6 +1095,10 @@ menu_delete_tunnel() {
     systemctl stop "$sel_svc" 2>/dev/null || true
     systemctl disable "$sel_svc" 2>/dev/null || true
     rm -f "$SERVICE_DIR/$sel_svc"
+    # Remove cron job if exists
+    if [[ -d "$CRON_CONFIG_DIR" ]]; then
+        _cron_remove "$sel_svc" 2>/dev/null || true
+    fi
     systemctl daemon-reload
 
     if [[ -n "$exec_start" ]] && [[ -f "$exec_start" ]]; then
@@ -1186,8 +1191,8 @@ menu_edit_config() {
         "$editor" "$chosen"
 
         # Reload the associated service
-        local basename; basename=$(basename "$chosen" .toml)
-        local svc="backhaul-$basename.service"
+        local cfg_basename; cfg_basename=$(basename "$chosen" .toml)
+        local svc="backhaul-$cfg_basename.service"
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             prompt "Restart $svc to apply changes? [Y/n]:"; read -r do_restart
             [[ "${do_restart,,}" != "n" ]] && \
@@ -1752,6 +1757,126 @@ _tunnel_conn_status() {
     esac
 }
 
+# ─── AUTO-RESTART (Cron) ─────────────────────────────────────────────────────
+CRON_MARKER="# backhaul-auto-restart"
+CRON_CONFIG_DIR="$INSTALL_DIR/cron"
+
+_cron_get_config_path() {
+    local svc="$1"
+    echo "$CRON_CONFIG_DIR/${svc}.conf"
+}
+
+_cron_is_active() {
+    local svc="$1"
+    crontab -l 2>/dev/null | grep -q "$CRON_MARKER.*$svc"
+}
+
+_cron_get_interval() {
+    local svc="$1"
+    local conf; conf=$(_cron_get_config_path "$svc")
+    if [[ -f "$conf" ]]; then
+        grep '^INTERVAL=' "$conf" 2>/dev/null | head -1 | cut -d= -f2
+    else
+        echo ""
+    fi
+}
+
+_cron_install() {
+    local svc="$1" interval_min="$2"
+    local conf; conf=$(_cron_get_config_path "$svc")
+
+    mkdir -p "$CRON_CONFIG_DIR"
+    cat > "$conf" <<EOF
+SERVICE=$svc
+INTERVAL=$interval_min
+EOF
+
+    local cron_line="*/${interval_min} * * * * systemctl restart ${svc} ${CRON_MARKER} ${svc}"
+    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc"; echo "$cron_line") | crontab -
+}
+
+_cron_remove() {
+    local svc="$1"
+    local conf; conf=$(_cron_get_config_path "$svc")
+
+    crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc" | crontab -
+    rm -f "$conf"
+}
+
+menu_auto_restart() {
+    local svc="$1"
+    section "Auto-Restart (Cron)"
+
+    local is_active; is_active=$(_cron_is_active "$svc")
+    local current_interval; current_interval=$(_cron_get_interval "$svc")
+
+    if [[ "$is_active" == "true" ]] && [[ -n "$current_interval" ]]; then
+        echo -e "  ${BOLD}${WHITE}Current Status:${NC}"
+        echo -e "  ${BULLET} Service    : ${CYAN}$svc${NC}"
+        echo -e "  ${BULLET} Status     : ${LGREEN}ACTIVE${NC}"
+        echo -e "  ${BULLET} Interval   : ${LYELLOW}Every ${current_interval} minute(s)${NC}"
+        echo -e "  ${BULLET} Next restart: ${DIM}$(date -d "+${current_interval} minutes" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')${NC}"
+    else
+        echo -e "  ${BOLD}${WHITE}Auto-Restart is NOT configured for: ${CYAN}$svc${NC}"
+    fi
+
+    separator
+    echo -e "\n  ${BOLD}${WHITE}Schedule Options:${NC}"
+    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Every 30 minutes${NC}  — Clear cache frequently"
+    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Every 1 hour${NC}      — Balanced (recommended)"
+    echo -e "  ${WHITE}[3]${NC} ${LCYAN}Every 2 hours${NC}     — Less frequent"
+    echo -e "  ${WHITE}[4]${NC} ${LMAGENTA}Every 6 hours${NC}     — Conservative"
+    echo -e "  ${WHITE}[5]${NC} ${LRED}Custom interval${NC}   — Enter minutes manually"
+    echo -e "  ${WHITE}[6]${NC} ${RED}Disable / Remove${NC}  — Stop auto-restart"
+    echo -e "  ${WHITE}[0]${NC} Back"
+    separator
+    prompt "Choice:"; read -r cron_choice
+
+    local interval_min=""
+    case "$cron_choice" in
+        1) interval_min=30 ;;
+        2) interval_min=60 ;;
+        3) interval_min=120 ;;
+        4) interval_min=360 ;;
+        5)
+            prompt "Enter interval in minutes:"; read -r custom_min
+            if [[ "$custom_min" =~ ^[0-9]+$ ]] && (( custom_min >= 1 && custom_min <= 1440 )); then
+                interval_min="$custom_min"
+            else
+                warn "Invalid interval. Must be 1-1440 minutes."
+                press_enter; return
+            fi
+            ;;
+        6)
+            if [[ "$is_active" == "true" ]]; then
+                _cron_remove "$svc"
+                success "Auto-restart disabled for $svc"
+            else
+                info "Auto-restart was not configured."
+            fi
+            press_enter; return
+            ;;
+        0) return ;;
+        *) warn "Invalid choice"; press_enter; return ;;
+    esac
+
+    if [[ -n "$interval_min" ]]; then
+        echo ""
+        warn "This will restart the tunnel every ${interval_min} minute(s)."
+        warn "The tunnel will briefly disconnect during restart."
+        prompt "Continue? [Y/n]:"; read -r confirm
+        if [[ "${confirm,,}" != "n" ]]; then
+            _cron_install "$svc" "$interval_min"
+            success "Auto-restart enabled: every ${interval_min} minute(s)"
+            echo -e "  ${DIM}Cron job: systemctl restart $svc${NC}"
+            echo -e "  ${DIM}Config: $(_cron_get_config_path "$svc")${NC}"
+        else
+            info "Cancelled."
+        fi
+    fi
+    press_enter
+}
+
 menu_tunnel_manage() {
     local svc="$1"
 
@@ -1783,6 +1908,7 @@ menu_tunnel_manage() {
         echo -e "  ${LBLUE}[4]${NC}  View Logs  ${DIM}(live)${NC}"
         echo -e "  ${MAGENTA}[5]${NC}  Edit Config"
         echo -e "  ${RED}[6]${NC}  Delete Tunnel"
+        echo -e "  ${CYAN}[7]${NC}  Schedule Auto-Restart  ${DIM}(cron)${NC}"
         echo -e "  ${GRAY}[0]${NC}  Back"
         separator
         prompt "Choice:"; read -r sub_choice
@@ -1862,6 +1988,10 @@ menu_tunnel_manage() {
                     systemctl disable "$svc" 2>/dev/null || true
                     rm -f "$SERVICE_DIR/$svc"
                     systemctl daemon-reload
+                    # Remove cron job if exists
+                    if [[ -d "$CRON_CONFIG_DIR" ]]; then
+                        _cron_remove "$svc" 2>/dev/null || true
+                    fi
                     if [[ -n "$cfg" ]] && [[ -f "$cfg" ]]; then
                         backup_config "$cfg"
                         rm -f "$cfg"
@@ -1875,6 +2005,7 @@ menu_tunnel_manage() {
                 fi
                 ;;
             0) return ;;
+            7) menu_auto_restart "$svc" ;;
             *)
                 warn "Invalid option"
                 sleep 1
@@ -1883,21 +2014,7 @@ menu_tunnel_manage() {
     done
 }
 
-# ─── MANAGE TUNNELS — pick tunnel then submenu ────────────────────────────────
-menu_manage_tunnels() {
-    while true; do
-        print_header
-        section "Manage Tunnels"
-
-        local svcs=()
-        list_tunnels svcs
-
-        if [[ ${#svcs[@]} -eq 0 ]]; then
-            warn "No Backhaul tunnels found. Create one first."
-            press_enter; return
-        fi
-
-        echo -e "  ${BOLD}${WHITE}Select a tunnel to manage:${NC}\n"
+# ─── MAIN MENU ───────────────────────────────────────────────────────────────
         local i=1
         for svc in "${svcs[@]}"; do
             local stat; stat=$(service_status_color "$svc")

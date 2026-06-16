@@ -16,6 +16,7 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 - Config backup/restore and firewall helper for UFW or iptables
 - Built-in two-way link test for ping and TCP reachability checks
 - WSSMUX TLS certificate generation with OpenSSL
+- **Auto-restart via cron** — schedule periodic tunnel restarts to clear cache and maintain speed
 
 ## Requirements
 
@@ -45,12 +46,23 @@ For the best default experience, choose **WSSMUX** as the tunnel transport and u
 4. Create the matching tunnel using the Iran server address and the same token.
 5. Use **Manage Tunnels** to inspect status, follow logs, restart, edit, or delete services.
 
+## Auto-Restart (Cron)
+
+Schedule periodic tunnel restarts to clear cache and maintain optimal speed:
+
+1. Go to **Manage Tunnels** → Select a tunnel → **Schedule Auto-Restart**
+2. Choose an interval (30 min, 1 hour, 2 hours, 6 hours, or custom)
+3. The cron job will automatically restart the tunnel at the specified interval
+
+**Note:** The tunnel will briefly disconnect during restart. This is normal behavior.
+
 ## Notes
 
 - Generated configs are stored in `/etc/backhaul`.
 - Services are created as `backhaul-<role>-<transport>-<port>.service`.
 - Existing configs are backed up before overwrite/edit/delete operations.
 - For WSSMUX, the script can generate a self-signed TLS certificate automatically.
+- Cron configs for auto-restart are stored in `/etc/backhaul/cron/`.
 
 ## License
 
