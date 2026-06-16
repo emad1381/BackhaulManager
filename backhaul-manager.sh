@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.3.2
+#  Version : 1.3.3
 #  Author  : emad1381
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
@@ -171,7 +171,7 @@ LOGO
 ask_server_role() {
     clear
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.2 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.3 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
     # Try auto-detect first
@@ -221,7 +221,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.2 by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.3.3 by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2067,9 +2067,7 @@ menu_webpanel() {
 
     # Check if webpanel is already running
     local running_pid=""
-    if pgrep -f "python3.*server.py.*$WEBPANEL_PORT" >/dev/null 2>&1; then
-        running_pid=$(pgrep -f "python3.*server.py.*$WEBPANEL_PORT" | head -1)
-    fi
+    running_pid=$(pgrep -f "python3.*server\.py" 2>/dev/null | head -1)
 
     if [[ -n "$running_pid" ]]; then
         echo -e "  ${OK} ${LGREEN}Web Panel is RUNNING${NC}"
@@ -2122,7 +2120,7 @@ menu_webpanel() {
             fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
             sleep 2
             # Method 3: kill any python server.py processes
-            pkill -9 -f "server.py" 2>/dev/null
+            pkill -9 -f "python3.*server\.py" 2>/dev/null
             sleep 3
             # Verify port is free
             if ss -tlnp 2>/dev/null | grep -q ":${WEBPANEL_PORT} "; then
@@ -2133,9 +2131,9 @@ menu_webpanel() {
             info "Starting Web Panel on port $WEBPANEL_PORT..."
             mkdir -p "$INSTALL_DIR" "$WEBPANEL_DIR"
             nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
-            sleep 2
+            sleep 4
 
-            if pgrep -f "python3.*server.py.*$WEBPANEL_PORT" >/dev/null 2>&1; then
+            if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
                 success "Web Panel started!"
                 echo ""
                 echo -e "  ${BOLD}${LGREEN}  ╔══════════════════════════════════════════════════════╗${NC}"
