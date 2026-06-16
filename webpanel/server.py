@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.4
+Version: 2.4.5
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -127,9 +127,9 @@ def sudo_cmd(user, cmd):
 
 def get_binary_version(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
-        out, _ = run_ssh(host, user, key_file, sudo_cmd(user, f"{BINARY} --version 2>/dev/null | head -1"), password=password, port=port)
+        out, _ = run_ssh(host, user, key_file, sudo_cmd(user, f"{BINARY} -v 2>/dev/null"), password=password, port=port)
     else:
-        out, _ = run_cmd(f"{BINARY} --version 2>/dev/null | head -1")
+        out, _ = run_cmd(f"{BINARY} -v 2>/dev/null")
     return out if out else "not installed"
 
 def get_server_info(srv):
@@ -163,7 +163,7 @@ def get_server_info(srv):
             "echo -n 'DISK:'; df -h / 2>/dev/null | awk 'NR==2{print $3 \" used / \" $2}' || echo ''; "
             "echo -n 'UPTIME:'; uptime -p 2>/dev/null || uptime | awk -F', ' '{print $1}' || echo ''; "
             "echo -n 'ROLE:'; systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown); "
-            f"echo -n 'VER:'; {BINARY} --version 2>/dev/null | head -1 || echo 'not installed'"
+            f"echo -n 'VER:'; {BINARY} -v 2>/dev/null || echo 'not installed'"
         )
         out, _ = run_ssh(host, user, key, sudo_cmd(user, cmd), password=password, port=port)
         
@@ -1290,7 +1290,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.4</div>
+<div class="topbar-badge">Premium v2.4.5</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1941,7 +1941,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.4")
+    print("  BackhaulManager Web Panel v2.4.5")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")

@@ -316,7 +316,7 @@ print_header() {
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
-        local ver; ver=$("$BINARY" --version 2>/dev/null | head -1 || echo "v0.7.x")
+        local ver; ver=$("$BINARY" -v 2>/dev/null || echo "v0.7.x")
         echo -e "  ${GRAY}Binary: ${WHITE}$ver${NC}   ${GRAY}Path : ${DIM}$BINARY${NC}"
     }
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
@@ -342,7 +342,7 @@ menu_install() {
     local custom_url=""
 
     [[ -x "$BINARY" ]] && \
-        echo -e "  ${DIM}Current version: $("$BINARY" --version 2>/dev/null | head -1 || echo 'unknown')${NC}\n"
+        echo -e "  ${DIM}Current version: $("$BINARY" -v 2>/dev/null || echo 'unknown')${NC}\n"
 
     echo -e "  ${BOLD}${WHITE}Select installation source:${NC}\n"
     echo -e "  ${WHITE}[1]${NC} ${LGREEN}GitHub${NC}      — Download latest release automatically"
@@ -450,7 +450,7 @@ menu_install() {
     chmod +x "$BINARY"
     rm -rf "$tmp_dir"
 
-    local new_ver; new_ver=$("$BINARY" --version 2>/dev/null | head -1 || echo 'OK')
+    local new_ver; new_ver=$("$BINARY" -v 2>/dev/null || echo 'OK')
     success "Backhaul installed successfully — $new_ver"
     echo -e "  ${BULLET} Binary : ${CYAN}$BINARY${NC}"
     echo -e "  ${BULLET} Configs: ${DIM}$INSTALL_DIR${NC}"
@@ -1817,7 +1817,7 @@ menu_info() {
     echo -e "\n  ${BOLD}${WHITE}Backhaul Binary:${NC}"
     if [[ -x "$BINARY" ]]; then
         echo -e "  ${BULLET} Path    : ${CYAN}$BINARY${NC}"
-        echo -e "  ${BULLET} Version : ${LYELLOW}$("$BINARY" --version 2>/dev/null | head -1 || echo 'unknown')${NC}"
+        echo -e "  ${BULLET} Version : ${LYELLOW}$("$BINARY" -v 2>/dev/null || echo 'unknown')${NC}"
         echo -e "  ${BULLET} Size    : ${DIM}$(du -sh "$BINARY" | cut -f1)${NC}"
     else
         echo -e "  ${WARN} Binary not found at $BINARY"
