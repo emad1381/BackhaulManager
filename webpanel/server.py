@@ -693,6 +693,64 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"success": True, "output": out, "loss": loss, "avg": avg})
             else:
                 self.send_json({"error": "server not found"}, 404)
+        if path == "/api/tunnel/diagnostics":
+            iran_id = data.get("iran_id", "")
+            kharej_id = data.get("kharej_id", "")
+            test_port = data.get("test_port", 9999)
+            data_servers = load_servers()
+            servers = data_servers.get("servers", [])
+            iran_srv = next((s for s in servers if s.get("id") == iran_id), None)
+            kharej_srv = next((s for s in servers if s.get("id") == kharej_id), None)
+            if not iran_srv or not kharej_srv:
+                self.send_json({"error": "server not found"}, 404)
+                return
+            kharej_ip = kharej_srv.get("ip")
+            if kharej_ip in ["localhost", "127.0.0.1", ""]:
+                kharej_ip = "127.0.0.1"
+            remote_exec(kharej_srv, f"python3 -m http.server {test_port} > /dev/null 2>&1 & echo $! > /tmp/test_pid", timeout=5)
+            time.sleep(1)
+            curl_out, curl_code = remote_exec(iran_srv, f"curl -m 5 -s http://{kharej_ip}:{test_port} | head -n 1", timeout=10)
+            tcp_open = "Directory listing" in curl_out or curl_code == 0
+            remote_exec(kharej_srv, "kill -9 $(cat /tmp/test_pid) 2>/dev/null || true", timeout=5)
+            ping_out, ping_code = remote_exec(iran_srv, f"ping -c 5 -W 2 {kharej_ip}", timeout=15)
+            loss = "100%"
+            avg = "N/A"
+            for line in ping_out.split('\\n'):
+                if "packet loss" in line:
+                    parts = line.split(',')
+                    for p in parts:
+                        if "packet loss" in p:
+                            loss = p.strip().split(' ')[0]
+                elif line.startswith("rtt min/avg/max/mdev") or line.startswith("round-trip min/avg/max/stddev"):
+                    try:
+                        avg = line.split('=')[1].split('/')[1] + " ms"
+                    except:
+                        pass
+            try:
+                loss_val = float(loss.replace('%', ''))
+            except:
+                loss_val = 100
+            score = 100
+            if loss_val > 0:
+                score -= loss_val
+            if not tcp_open:
+                score -= 50
+            verdict = "Excellent for Tunneling"
+            if score < 50:
+                verdict = "Blocked or High Loss - Not Recommended"
+            elif score < 80:
+                verdict = "Acceptable, but has packet loss"
+            if not tcp_open:
+                verdict = "TCP Blocked - Tunnel may fail!"
+            self.send_json({
+                "success": True, 
+                "tcp_open": tcp_open, 
+                "ping_loss": loss, 
+                "ping_avg": avg, 
+                "score": max(0, score), 
+                "verdict": verdict,
+                "ping_raw": ping_out
+            })
             return
 
         if path == "/api/tunnel/action":
@@ -1079,6 +1137,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <button class="tab" onclick="switchTab('servers')">Servers</button>
 <button class="tab" onclick="switchTab('tunnels')">Tunnels</button>
 <button class="tab" onclick="switchTab('create')">Create Tunnel</button>
+<button class="tab" onclick="switchTab('diagnostics')">Diagnostics</button>
 <button class="tab" onclick="switchTab('settings')">Settings</button>
 </div>
 
@@ -1155,6 +1214,48 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div style="font-size:14px;color:var(--text-muted);margin-top:8px">Establishing secure connection between nodes.</div>
 </div>
 <div id="deploy-result" style="display:none"></div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- Diagnostics -->
+<div class="tab-content" id="tab-diagnostics">
+<div class="section">
+<div class="section-header"><h2>Node-to-Node Diagnostics</h2></div>
+<div class="section-body">
+<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;text-align:center">Test reachability, TCP open ports, and ping latency between an Iran node and Kharej node before tunneling.</p>
+<div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:20px;align-items:center">
+<div>
+<div style="font-size:13px;color:var(--success);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">IRAN (TESTER)</div>
+<div class="form-group"><select id="diag-iran-select"><option value="">Select Iran Server</option></select></div>
+</div>
+<div class="connection-line" style="padding:0"><div class="line"></div><div class="arrow">🏓</div><div class="line"></div></div>
+<div>
+<div style="font-size:13px;color:var(--secondary);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">KHAREJ (TARGET)</div>
+<div class="form-group"><select id="diag-kharej-select"><option value="">Select Kharej Server</option></select></div>
+</div>
+</div>
+<div class="form-row" style="margin-top:20px;justify-content:center;display:flex">
+<div class="form-group" style="width:200px"><label>Test Port (Kharej Listener)</label><input type="number" id="diag-port" value="9999"></div>
+</div>
+<div style="text-align:center;margin-top:24px">
+<button class="btn btn-primary" onclick="runDiagnostics()" id="btn-run-diag" style="width:200px">Run Diagnostics</button>
+</div>
+<div id="diag-results" style="display:none;margin-top:32px">
+<div class="card" style="background:rgba(0,0,0,0.5)">
+<h3 style="text-align:center;margin-bottom:20px" id="diag-verdict"></h3>
+<div class="server-stats">
+<div class="server-stat"><div class="label">TCP Reachability</div><div class="value" id="diag-tcp"></div></div>
+<div class="server-stat"><div class="label">Packet Loss</div><div class="value" id="diag-loss"></div></div>
+<div class="server-stat"><div class="label">Average Ping</div><div class="value" id="diag-ping"></div></div>
+<div class="server-stat"><div class="label">Overall Score</div><div class="value" id="diag-score"></div></div>
+</div>
+<div style="margin-top:20px">
+<label style="font-size:12px;color:var(--text-muted);font-weight:600">Raw Ping Output:</label>
+<pre id="diag-raw" class="logs-box" style="margin-top:8px;max-height:150px"></pre>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -1253,7 +1354,7 @@ async function doLogout(){await api("/api/auth/logout");window.location.href="/l
 
 async function loadServers(){
 const d=await api("/api/servers");
-if(d&&d.servers){servers=d.servers;renderServerCards();renderServerManage();renderCreateWizard();renderDashboardTunnels()}
+if(d&&d.servers){servers=d.servers;renderServerCards();renderServerManage();renderCreateWizard();renderDashboardTunnels();renderDiagnostics();}
 }
 
 function renderServerCards(){
@@ -1303,6 +1404,38 @@ function renderCreateWizard(){
 const iran=servers.filter(s=>s.role==="iran"); const kharej=servers.filter(s=>s.role==="kharej");
 document.getElementById("iran-server-select").innerHTML=iran.length?iran.map(s=>`<div class="server-select-card ${selectedIran===s.id?"selected":""}" onclick="selectIran('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Iran server added</p></div>';
 document.getElementById("kharej-server-select").innerHTML=kharej.length?kharej.map(s=>`<div class="server-select-card ${selectedKharej===s.id?"selected":""}" onclick="selectKharej('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Kharej server added</p></div>';
+}
+
+function renderDiagnostics(){
+const iran=servers.filter(s=>s.role==="iran"); const kharej=servers.filter(s=>s.role==="kharej");
+document.getElementById("diag-iran-select").innerHTML='<option value="">Select Iran Server</option>'+iran.map(s=>`<option value="${s.id}">${s.name} (${s.ip})</option>`).join("");
+document.getElementById("diag-kharej-select").innerHTML='<option value="">Select Kharej Server</option>'+kharej.map(s=>`<option value="${s.id}">${s.name} (${s.ip})</option>`).join("");
+}
+
+async function runDiagnostics(){
+const iran_id = document.getElementById("diag-iran-select").value;
+const kharej_id = document.getElementById("diag-kharej-select").value;
+const port = document.getElementById("diag-port").value;
+if(!iran_id || !kharej_id){showToast("Please select both servers","error");return;}
+const btn = document.getElementById("btn-run-diag");
+btn.disabled = true; btn.textContent = "Testing... Please wait (up to 20s)";
+document.getElementById("diag-results").style.display = "none";
+const r = await api("/api/tunnel/diagnostics", {iran_id: iran_id, kharej_id: kharej_id, test_port: port});
+btn.disabled = false; btn.textContent = "Run Diagnostics";
+if(r && r.success){
+document.getElementById("diag-results").style.display = "block";
+document.getElementById("diag-verdict").textContent = r.verdict;
+document.getElementById("diag-verdict").style.color = r.score > 80 ? "var(--success)" : r.score > 40 ? "var(--warning)" : "var(--danger)";
+document.getElementById("diag-tcp").innerHTML = r.tcp_open ? '<span style="color:var(--success)">OPEN</span>' : '<span style="color:var(--danger)">BLOCKED/CLOSED</span>';
+document.getElementById("diag-loss").textContent = r.ping_loss;
+document.getElementById("diag-ping").textContent = r.ping_avg;
+document.getElementById("diag-score").textContent = r.score + "/100";
+document.getElementById("diag-score").style.color = r.score > 80 ? "var(--success)" : r.score > 40 ? "var(--warning)" : "var(--danger)";
+document.getElementById("diag-raw").textContent = r.ping_raw;
+showToast("Diagnostics completed","success");
+}else{
+showToast("Diagnostics failed","error");
+}
 }
 
 function renderDashboardTunnels(){
