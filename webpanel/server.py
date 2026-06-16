@@ -84,9 +84,19 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
     except Exception as e:
         return str(e), 1
 
+def is_safe_svc(name):
+    if not name:
+        return False
+    return all(c.isalnum() or c in "-._" for c in name)
+
+def is_safe_ip_domain(target):
+    if not target:
+        return False
+    return all(c.isalnum() or c in ".-" for c in target)
+
 def get_local_ip():
-    out, _ = run_cmd("hostname -I 2>/dev/null | awk '{print $1}'")
-    return out if out else "unknown"
+    out, _ = run_cmd("hostname -I 2>/dev/null | awk '{print $1}' || ip route get 1 2>/dev/null | awk '{print $7}'")
+    return out if out else "127.0.0.1"
 
 def get_server_role(host=None, user=None, key_file=None, password="", port=22):
     if host and host != "127.0.0.1" and host != "localhost":
@@ -145,15 +155,31 @@ def get_server_info(srv):
         ssh_ok = True
     else:
         ip = host
-        hostname_out, _ = run_ssh(host, user, key, sudo_cmd(user, "hostname"), password=password, port=port)
-        version = get_binary_version(host, user, key, password=password, port=port)
-        role_actual = get_server_role(host, user, key, password=password, port=port)
-        kernel, _ = run_ssh(host, user, key, sudo_cmd(user, "uname -r"), password=password, port=port)
-        load, _ = run_ssh(host, user, key, sudo_cmd(user, "cut -d' ' -f1-3 /proc/loadavg"), password=password, port=port)
-        mem, _ = run_ssh(host, user, key, sudo_cmd(user, "free -h | awk '/^Mem:/{print $3 \" used / \" $2}'"), password=password, port=port)
-        disk, _ = run_ssh(host, user, key, sudo_cmd(user, "df -h / | awk 'NR==2{print $3 \" used / \" $2}'"), password=password, port=port)
-        uptime_out, _ = run_ssh(host, user, key, sudo_cmd(user, "uptime -p"), password=password, port=port)
-        ssh_ok = (hostname_out != "" and "Permission denied" not in hostname_out and "Connection refused" not in hostname_out and "No route to host" not in hostname_out)
+        cmd = (
+            "hostname && echo '---' && "
+            "uname -r && echo '---' && "
+            "cut -d' ' -f1-3 /proc/loadavg && echo '---' && "
+            "free -h | awk '/^Mem:/{print $3 \" used / \" $2}' && echo '---' && "
+            "df -h / | awk 'NR==2{print $3 \" used / \" $2}' && echo '---' && "
+            "uptime -p && echo '---' && "
+            "(systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-iran' && echo iran || (systemctl list-units --type=service --state=running 2>/dev/null | grep -q 'backhaul-kharej' && echo kharej || echo unknown)) && echo '---' && "
+            f"({BINARY} --version 2>/dev/null | head -1 || echo 'not installed')"
+        )
+        out, _ = run_ssh(host, user, key, sudo_cmd(user, cmd), password=password, port=port)
+        parts = [p.strip() for p in out.split("---")]
+        if len(parts) >= 8:
+            hostname_out = parts[0]
+            kernel = parts[1]
+            load = parts[2]
+            mem = parts[3]
+            disk = parts[4]
+            uptime_out = parts[5]
+            role_actual = parts[6]
+            version = parts[7]
+            ssh_ok = (hostname_out != "" and "Permission denied" not in hostname_out and "Connection refused" not in hostname_out and "No route to host" not in hostname_out)
+        else:
+            hostname_out, kernel, load, mem, disk, uptime_out, role_actual, version = "", "", "", "", "", "", "unknown", "not installed"
+            ssh_ok = False
 
     return {
         "id": srv.get("id", ""),
@@ -404,7 +430,8 @@ def create_tunnel_on_server(srv, params):
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
         escaped = config_content.replace("'", "'\\''")
-        run_ssh(host, user, key, sudo_cmd(user, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << 'ENDOFFILE'\n{config_content}ENDOFFILE"), password=password, port=ssh_port)
+        delim = f"DELIM_{secrets.token_hex(8)}"
+        run_ssh(host, user, key, sudo_cmd(user, f"mkdir -p {INSTALL_DIR} && cat > {config_file} << '{delim}'\n{config_content}{delim}"), password=password, port=ssh_port)
 
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
@@ -434,7 +461,8 @@ WantedBy=multi-user.target
         key = srv.get("ssh_key", "")
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
-        run_ssh(host, user, key, sudo_cmd(user, f"cat > {service_file} << 'ENDOFFILE'\n{service_content}ENDOFFILE"), password=password, port=ssh_port)
+        delim = f"DELIM_{secrets.token_hex(8)}"
+        run_ssh(host, user, key, sudo_cmd(user, f"cat > {service_file} << '{delim}'\n{service_content}{delim}"), password=password, port=ssh_port)
 
     remote_exec(srv, "systemctl daemon-reload")
     remote_exec(srv, f"systemctl enable {svc_name} 2>/dev/null")
@@ -548,11 +576,20 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             svc = params.get("svc", [""])[0]
             server_id = params.get("server_id", [""])[0]
             lines = params.get("lines", ["100"])[0]
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
+            try:
+                lines_val = int(lines)
+                if lines_val < 1 or lines_val > 1000:
+                    lines_val = 100
+            except:
+                lines_val = 100
             if svc:
                 data = load_servers()
                 srv = next((s for s in data.get("servers", []) if s.get("id") == server_id), None)
                 if srv:
-                    out, _ = remote_exec(srv, f"journalctl -u {svc} -n {lines} --no-pager 2>/dev/null")
+                    out, _ = remote_exec(srv, f"journalctl -u {svc} -n {lines_val} --no-pager 2>/dev/null")
                     self.send_json({"logs": out})
                 else:
                     self.send_json({"error": "server not found"}, 404)
@@ -564,6 +601,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed.query)
             svc = params.get("svc", [""])[0]
             server_id = params.get("server_id", [""])[0]
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
             if svc:
                 data = load_servers()
                 srv = next((s for s in data.get("servers", []) if s.get("id") == server_id), None)
@@ -706,6 +746,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if not server_id or not target_ip:
                 self.send_json({"error": "missing params"}, 400)
                 return
+            if not is_safe_ip_domain(target_ip):
+                self.send_json({"error": "invalid target IP or domain name"}, 400)
+                return
             data_servers = load_servers()
             srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
             if srv:
@@ -731,6 +774,12 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             iran_id = data.get("iran_id", "")
             kharej_id = data.get("kharej_id", "")
             test_port = data.get("test_port", 9999)
+            try:
+                test_port = int(test_port)
+                if not (1 <= test_port <= 65535):
+                    test_port = 9999
+            except:
+                test_port = 9999
             data_servers = load_servers()
             servers = data_servers.get("servers", [])
             iran_srv = next((s for s in servers if s.get("id") == iran_id), None)
@@ -791,6 +840,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             svc = data.get("service", "")
             action = data.get("action", "")
             server_id = data.get("server_id", "")
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
             if svc and action in ["start", "stop", "restart"]:
                 data_servers = load_servers()
                 srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
@@ -806,6 +858,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/tunnel/delete":
             svc = data.get("service", "")
             server_id = data.get("server_id", "")
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
             if svc:
                 data_servers = load_servers()
                 srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
@@ -888,6 +943,15 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             interval = data.get("interval", 0)
             action = data.get("action", "set")
             server_id = data.get("server_id", "")
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
+            try:
+                interval = int(interval)
+                if interval < 0 or interval > 1440:
+                    interval = 0
+            except:
+                interval = 0
             data_servers = load_servers()
             srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
             if not srv:
@@ -907,6 +971,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             svc = data.get("service", "")
             config = data.get("config", "")
             server_id = data.get("server_id", "")
+            if not is_safe_svc(svc):
+                self.send_json({"error": "invalid service name"}, 400)
+                return
             if svc and config:
                 data_servers = load_servers()
                 srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
@@ -920,7 +987,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                         with open(config_path, 'w') as f:
                             f.write(config)
                     else:
-                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), sudo_cmd(srv.get("ssh_user", "root"), f"cat > {config_path} << 'ENDOFFILE'\n{config}ENDOFFILE"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
+                        delim = f"DELIM_{secrets.token_hex(8)}"
+                        run_ssh(host, srv.get("ssh_user", "root"), srv.get("ssh_key", ""), sudo_cmd(srv.get("ssh_user", "root"), f"cat > {config_path} << '{delim}'\n{config}{delim}"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
                     remote_exec(srv, f"systemctl restart {svc}")
                     self.send_json({"success": True})
                 else:
