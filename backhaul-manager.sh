@@ -172,6 +172,7 @@ update_script() {
     info "Checking for script updates..."
     local ts; ts=$(date +%s)
     local urls=(
+        "https://api.github.com/repos/emad1381/BackhaulManager/contents/backhaul-manager.sh"
         "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
         "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
         "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul-manager.sh?t=$ts"
@@ -183,8 +184,10 @@ update_script() {
     local url_index=0
     for url in "${urls[@]}"; do
         if (( url_index == 0 )); then
-            info "Trying download from direct GitHub repository..."
+            info "Trying download from GitHub contents API (realtime)..."
         elif (( url_index == 1 )); then
+            warn "GitHub API download failed. Switching to direct GitHub raw..."
+        elif (( url_index == 2 )); then
             warn "Direct GitHub download failed. Switching to mirror 1 (GHProxy)..."
         else
             warn "GHProxy mirror failed. Switching to mirror 2 (NetProxy)..."
@@ -193,14 +196,14 @@ update_script() {
 
         rm -f "$temp_file"
         if command -v wget &>/dev/null; then
-            if wget -q --timeout=15 --tries=2 -O "$temp_file" "$url" 2>/dev/null; then
+            if wget -q --header="Accept: application/vnd.github.v3.raw" --header="User-Agent: BackhaulManager" --timeout=15 --tries=2 -O "$temp_file" "$url" 2>/dev/null; then
                 if [[ -s "$temp_file" ]]; then
                     success=true
                     break
                 fi
             fi
         elif command -v curl &>/dev/null; then
-            if curl -sL --connect-timeout 15 --retry 2 -o "$temp_file" "$url" 2>/dev/null; then
+            if curl -sL -H "Accept: application/vnd.github.v3.raw" -H "User-Agent: BackhaulManager" --connect-timeout 15 --retry 2 -o "$temp_file" "$url" 2>/dev/null; then
                 if [[ -s "$temp_file" ]]; then
                     success=true
                     break
@@ -2363,6 +2366,7 @@ SERVICE
             # Download from GitHub
             local ts; ts=$(date +%s)
             local urls=(
+                "https://api.github.com/repos/emad1381/BackhaulManager/contents/webpanel/server.py"
                 "https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
                 "https://mirror.ghproxy.com/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
                 "https://ghproxy.net/https://raw.githubusercontent.com/emad1381/BackhaulManager/master/webpanel/server.py?t=$ts"
@@ -2371,9 +2375,11 @@ SERVICE
             local url_index=0
             for url in "${urls[@]}"; do
                 if (( url_index == 0 )); then
-                    info "Downloading from direct URL: $url"
+                    info "Downloading from GitHub contents API (realtime)..."
                 elif (( url_index == 1 )); then
-                    warn "Direct download failed. Switching to mirror 1 (GHProxy)..."
+                    warn "GitHub API download failed. Switching to direct GitHub raw..."
+                elif (( url_index == 2 )); then
+                    warn "Direct GitHub download failed. Switching to mirror 1 (GHProxy)..."
                 else
                     warn "GHProxy mirror failed. Switching to mirror 2 (NetProxy)..."
                 fi
@@ -2381,9 +2387,9 @@ SERVICE
 
                 rm -f "$WEBPANEL_SCRIPT"
                 if command -v wget &>/dev/null; then
-                    wget -q --timeout=15 --tries=2 -O "$WEBPANEL_SCRIPT" "$url" 2>/dev/null
+                    wget -q --header="Accept: application/vnd.github.v3.raw" --header="User-Agent: BackhaulManager" --timeout=15 --tries=2 -O "$WEBPANEL_SCRIPT" "$url" 2>/dev/null
                 elif command -v curl &>/dev/null; then
-                    curl -sL --connect-timeout 15 --retry 2 -o "$WEBPANEL_SCRIPT" "$url" 2>/dev/null
+                    curl -sL -H "Accept: application/vnd.github.v3.raw" -H "User-Agent: BackhaulManager" --connect-timeout 15 --retry 2 -o "$WEBPANEL_SCRIPT" "$url" 2>/dev/null
                 else
                     warn "Neither wget nor curl found."
                     press_enter; continue 2
