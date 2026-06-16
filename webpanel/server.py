@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.0.0
+Version: 2.1.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -756,7 +756,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0a0e1
 </head>
 <body>
 <div class="login-container">
-<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.0.0</p></div>
+<div class="logo"><h1>BACKHAUL</h1><p>Multi-Server Panel v2.1.0</p></div>
 <div class="error-msg" id="error"></div>
 <form onsubmit="doLogin(event)">
 <div class="form-group"><label>Username</label><input type="text" id="username" placeholder="admin" autocomplete="username" required></div>
@@ -892,7 +892,7 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Multi-Server Panel v2.0.0</div>
+<div class="topbar-badge">Multi-Server Panel v2.1.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -1297,7 +1297,7 @@ if __name__ == "__main__":
     server = http.server.HTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.0.0")
+    print("  BackhaulManager Web Panel v2.1.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
