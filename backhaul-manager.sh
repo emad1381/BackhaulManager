@@ -2212,13 +2212,24 @@ menu_webpanel() {
     local running_pid=""
     running_pid=$(pgrep -f "python3.*server\.py" 2>/dev/null | head -1)
 
+    local wp_ver=""
+    if [[ -f "$WEBPANEL_SCRIPT" ]]; then
+        wp_ver=$(grep -i "Version:" "$WEBPANEL_SCRIPT" 2>/dev/null | head -n 1 | sed -E 's/.*[Vv]ersion:[[:space:]]*//' | tr -d '[:space:]')
+    fi
+
     if [[ -n "$running_pid" ]]; then
         echo -e "  ${OK} ${LGREEN}Web Panel is RUNNING${NC}"
+        if [[ -n "$wp_ver" ]]; then
+            echo -e "  ${BULLET} Version : ${LBLUE}v${wp_ver}${NC}"
+        fi
         echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
         echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
         echo -e "  ${BULLET} PID     : ${DIM}${running_pid}${NC}"
     else
         echo -e "  ${WARN} ${YELLOW}Web Panel is NOT running${NC}"
+        if [[ -n "$wp_ver" ]]; then
+            echo -e "  ${BULLET} Version : ${LBLUE}v${wp_ver}${NC}"
+        fi
     fi
 
     separator
