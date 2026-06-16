@@ -2224,7 +2224,7 @@ menu_webpanel() {
     echo -e "  ${WHITE}[1]${NC} ${LGREEN}Start${NC} Web Panel"
     echo -e "  ${WHITE}[2]${NC} ${RED}Stop${NC}  Web Panel"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Start${NC} on boot (systemd service)"
-    echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel files"
+    echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel (Auto-restart if running)"
     echo -e "  ${WHITE}[5]${NC} ${LCYAN}Restart${NC} Web Panel"
     echo -e "  ${WHITE}[6]${NC} ${RED}Uninstall${NC} Web Panel"
     echo -e "  ${WHITE}[0]${NC} Back to Main Menu"
@@ -2386,9 +2386,30 @@ SERVICE
 
             if [[ "$success" == "true" ]]; then
                 chmod +x "$WEBPANEL_SCRIPT"
-                success "Web Panel installed: $WEBPANEL_SCRIPT"
+                success "Web Panel files updated: $WEBPANEL_SCRIPT"
                 echo -e "  ${BULLET} Port    : ${CYAN}$WEBPANEL_PORT${NC}"
                 echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+
+                # If Web Panel was already running, restart it to apply changes
+                if [[ -n "$running_pid" ]] || systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                    info "Web Panel was running. Restarting to apply updates..."
+                    pkill -9 -f "python3.*server\.py" 2>/dev/null
+                    fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+                    sleep 2
+                    if systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
+                        systemctl restart backhaul-webpanel
+                        sleep 2
+                        if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                            success "Web Panel restarted and updated via systemd!"
+                        fi
+                    else
+                        nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
+                        sleep 3
+                        if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
+                            success "Web Panel restarted and updated!"
+                        fi
+                    fi
+                fi
             else
                 warn "Download failed. Please check your internet connection."
             fi
