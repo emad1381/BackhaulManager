@@ -2106,6 +2106,18 @@ menu_webpanel() {
                 press_enter; return
             fi
 
+            # Kill any process using port 54321
+            local port_pid
+            port_pid=$(ss -tlnp 2>/dev/null | grep ":${WEBPANEL_PORT} " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+            if [[ -n "$port_pid" ]]; then
+                info "Killing old process on port $WEBPANEL_PORT (PID: $port_pid)..."
+                kill "$port_pid" 2>/dev/null
+                sleep 1
+            fi
+            # Also kill any leftover python server.py processes
+            pkill -f "python3.*server.py.*${WEBPANEL_PORT}" 2>/dev/null
+            sleep 1
+
             info "Starting Web Panel on port $WEBPANEL_PORT..."
             mkdir -p "$INSTALL_DIR" "$WEBPANEL_DIR"
             nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
