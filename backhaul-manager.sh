@@ -2014,7 +2014,20 @@ menu_tunnel_manage() {
     done
 }
 
-# ─── MAIN MENU ───────────────────────────────────────────────────────────────
+menu_manage_tunnels() {
+    while true; do
+        print_header
+        section "Manage Tunnels"
+
+        local svcs=()
+        list_tunnels svcs
+
+        if [[ ${#svcs[@]} -eq 0 ]]; then
+            warn "No Backhaul tunnels found. Create one first."
+            press_enter; return
+        fi
+
+        echo -e "  ${BOLD}${WHITE}Select a tunnel to manage:${NC}\n"
         local i=1
         for svc in "${svcs[@]}"; do
             local stat; stat=$(service_status_color "$svc")
