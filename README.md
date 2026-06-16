@@ -73,7 +73,7 @@ Schedule periodic tunnel restarts to clear cache and maintain optimal speed:
 
 ## Web Panel
 
-Beautiful web interface to manage your tunnels from any browser:
+Beautiful web interface to manage **both Iran and Kharej servers** from one place:
 
 1. Run the script and select **[3] Web Panel**
 2. Choose **[4] Install / Update** to download the web panel files
@@ -82,11 +82,14 @@ Beautiful web interface to manage your tunnels from any browser:
 5. Login with `admin` / `admin`
 
 **Features:**
-- Dashboard with server status and tunnel overview
+- **Multi-Server Management** — add Iran + Kharej servers, manage from one dashboard
+- **One-Click Tunnel Creation** — create matching tunnel on both servers simultaneously
+- Beautiful dashboard with server status cards
 - Create, start, stop, restart, and delete tunnels
 - View live logs and edit config files
 - Schedule auto-restart (cron) for each tunnel
-- Install/update Backhaul binary
+- Install/update Backhaul binary on any server
+- SSH connection to manage remote servers
 - Responsive design works on mobile too
 
 To run as a service (auto-start on boot), select **[3] Start on boot**.
