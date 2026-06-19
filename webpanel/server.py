@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.4.6
+Version: 2.5.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1426,7 +1426,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.4.6</div>
+<div class="topbar-badge">Premium v2.5.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -2080,7 +2080,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.4.6")
+    print("  BackhaulManager Web Panel v2.5.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
