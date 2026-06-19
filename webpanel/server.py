@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.5.0
+Version: 2.6.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1356,9 +1356,8 @@ def get_login_page():
 </div>
 </div>
 </main>
-<footer class="fixed bottom-0 w-full flex flex-col md:flex-row justify-between items-center px-8 py-6 z-50 opacity-60">
-<div class="font-label-sm text-on-surface-variant text-center md:text-right">© ۲۰۲۴ مدیریت زیرساخت TunnelPro. تمامی حقوق محفوظ است.</div>
-<div class="mt-2 md:mt-0 font-label-technical text-primary">نسخه ۴.۲.۰ - اتصال امن</div>
+<footer class="fixed bottom-0 w-full flex flex-col md:flex-row justify-center items-center px-8 py-6 z-50 opacity-60">
+<div class="font-label-sm text-on-surface-variant text-center">© ۲۰۲۴ مدیریت زیرساخت TunnelPro. تمامی حقوق محفوظ است.</div>
 </footer>
 <div class="fixed inset-0 pointer-events-none opacity-[0.03] overflow-hidden">
 <div class="w-full h-full bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
@@ -1549,7 +1548,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 <div class="topbar">
 <div class="topbar-left">
 <div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.5.0</div>
+<div class="topbar-badge">Premium v2.6.0</div>
 </div>
 <div class="topbar-right">
 <button class="btn-logout" onclick="doLogout()">Logout</button>
@@ -2263,7 +2262,7 @@ if __name__ == "__main__":
     server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
     local_ip = get_local_ip()
     print("")
-    print("  BackhaulManager Web Panel v2.5.0")
+    print("  BackhaulManager Web Panel v2.6.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      http://{local_ip}:{PORT}")
