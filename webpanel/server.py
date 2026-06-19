@@ -68,7 +68,14 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         else:
             cmd = f"sudo -n {cmd[5:]}"
 
-    ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5", "-p", str(port)]
+    ssh_opts = [
+        "-o", "StrictHostKeyChecking=no", 
+        "-o", "ConnectTimeout=5", 
+        "-o", "ControlMaster=auto", 
+        "-o", "ControlPath=/tmp/ssh_mux_%h_%p_%r", 
+        "-o", "ControlPersist=10m",
+        "-p", str(port)
+    ]
     if password:
         sshpass_check, _ = run_cmd("which sshpass")
         if not sshpass_check:
