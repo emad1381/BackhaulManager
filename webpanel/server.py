@@ -1211,51 +1211,174 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
 def get_login_page():
     return """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BackhaulManager - Premium Login</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+<html class="dark" dir="rtl" lang="fa"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TunnelPro | ورود به سامانه</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;300;400;500;700;900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "outline-variant": "#3d494c",
+                    "primary": "#4cd7f6",
+                    "surface-container-lowest": "#060e20",
+                    "inverse-on-surface": "#283044",
+                    "surface-variant": "#2d3449",
+                    "on-surface": "#dae2fd",
+                    "on-background": "#dae2fd",
+                    "on-primary-fixed": "#001f26",
+                    "surface-container-low": "#131b2e",
+                    "on-primary-fixed-variant": "#004e5c",
+                    "on-secondary-fixed-variant": "#2f2ebe",
+                    "tertiary-fixed": "#6ffbbe",
+                    "inverse-surface": "#dae2fd",
+                    "surface-dim": "#0b1326",
+                    "on-surface-variant": "#bcc9cd",
+                    "tertiary": "#4edea3",
+                    "secondary-fixed": "#e1e0ff",
+                    "outline": "#869397",
+                    "on-secondary-fixed": "#07006c",
+                    "secondary-fixed-dim": "#c0c1ff",
+                    "on-tertiary": "#003824",
+                    "on-tertiary-fixed": "#002113",
+                    "on-error": "#690005",
+                    "tertiary-container": "#1bbd85",
+                    "on-secondary-container": "#b0b2ff",
+                    "on-primary-container": "#00424f",
+                    "tertiary-fixed-dim": "#4edea3",
+                    "error": "#ffb4ab",
+                    "surface-bright": "#31394d",
+                    "surface-container-high": "#222a3d",
+                    "on-tertiary-container": "#00452e",
+                    "on-error-container": "#ffdad6",
+                    "on-secondary": "#1000a9",
+                    "inverse-primary": "#00687a",
+                    "error-container": "#93000a",
+                    "surface-tint": "#4cd7f6",
+                    "surface": "#0b1326",
+                    "secondary-container": "#3131c0",
+                    "secondary": "#c0c1ff",
+                    "on-tertiary-fixed-variant": "#005236",
+                    "primary-fixed-dim": "#4cd7f6",
+                    "surface-container-highest": "#2d3449",
+                    "on-primary": "#003640",
+                    "surface-container": "#171f33",
+                    "primary-fixed": "#acedff",
+                    "background": "#0b1326",
+                    "primary-container": "#06b6d4"
+            },
+            "fontFamily": {
+                    "body-lg": ["Vazirmatn"],
+                    "headline-md": ["Vazirmatn"],
+                    "headline-lg-mobile": ["Vazirmatn"],
+                    "label-technical": ["JetBrains Mono"],
+                    "body-md": ["Vazirmatn"],
+                    "label-sm": ["Vazirmatn"],
+                    "headline-lg": ["Vazirmatn"]
+            }
+          },
+        },
+      }
+    </script>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; font-family:'Outfit', sans-serif; }
-body { background: #050505; min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #fff; overflow: hidden; }
-.bg-glow { position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, rgba(6,182,212,0.15) 0%, rgba(139,92,246,0.15) 50%, transparent 70%); top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 0; animation: pulse 8s infinite alternate; }
-@keyframes pulse { 0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; } 100% { transform: translate(-50%, -50%) scale(1.1); opacity: 1; } }
-.login-container { position: relative; z-index: 1; background: rgba(20, 20, 20, 0.6); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 24px; padding: 50px 40px; width: 420px; box-shadow: 0 30px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.1); }
-.logo { text-align: center; margin-bottom: 35px; }
-.logo h1 { font-size: 34px; font-weight: 800; background: linear-gradient(135deg, #fff, #a1a1aa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1px; }
-.logo p { color: #06b6d4; font-size: 13px; font-weight: 600; margin-top: 5px; text-transform: uppercase; letter-spacing: 2px; }
-.form-group { margin-bottom: 22px; }
-.form-group label { display: block; font-size: 13px; color: #a1a1aa; margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-.form-group input { width: 100%; padding: 15px 18px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; color: #fff; font-size: 15px; transition: all 0.3s; outline: none; }
-.form-group input:focus { border-color: #06b6d4; box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15); background: rgba(0, 0, 0, 0.8); }
-.form-group input::placeholder { color: #52525b; }
-.btn-login { width: 100%; padding: 15px; background: linear-gradient(135deg, #06b6d4, #3b82f6); border: none; border-radius: 12px; color: white; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s; margin-top: 10px; position: relative; overflow: hidden; }
-.btn-login::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); transition: all 0.5s; }
-.btn-login:hover::before { left: 100%; }
-.btn-login:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(6, 182, 212, 0.4); }
-.error-msg { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 14px; color: #f87171; font-size: 13px; text-align: center; display: none; margin-bottom: 20px; font-weight: 600; }
-.footer { text-align: center; margin-top: 25px; color: #52525b; font-size: 12px; font-weight: 600; letter-spacing: 1px; }
-</style>
+        body { background-color: #0b1326; font-family: 'Vazirmatn', sans-serif; overflow: hidden; }
+        .glass-card { backdrop-filter: blur(24px); background: rgba(15, 23, 42, 0.4); border: 0.5px solid rgba(255, 255, 255, 0.1); position: relative; }
+        .glass-card::before { content: ''; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent, rgba(76, 215, 246, 0.2)); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; pointer-events: none; }
+        .glow-sphere { position: absolute; border-radius: 50%; filter: blur(80px); z-index: 0; opacity: 0.4; }
+        .animate-float { animation: float 20s infinite alternate ease-in-out; }
+        @keyframes float { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(100px, 50px) scale(1.2); } }
+        .btn-glow:hover { box-shadow: 0 0 20px rgba(6, 182, 212, 0.5); }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
+    </style>
 </head>
-<body>
-<div class="bg-glow"></div>
-<div class="login-container">
-<div class="logo"><h1>BACKHAUL</h1><p>Premium Panel</p></div>
-<div class="error-msg" id="error"></div>
-<form onsubmit="doLogin(event)">
-<div class="form-group"><label>Username</label><input type="text" id="username" placeholder="Enter username" autocomplete="username" required></div>
-<div class="form-group"><label>Password</label><input type="password" id="password" placeholder="Enter password" autocomplete="current-password" required></div>
-<button type="submit" class="btn-login">Sign In to Dashboard</button>
+<body class="min-h-screen flex flex-col items-center justify-center relative bg-surface">
+<div class="fixed inset-0 overflow-hidden pointer-events-none">
+<div class="glow-sphere animate-float w-[500px] h-[500px] bg-primary/20 -top-20 -right-20"></div>
+<div class="glow-sphere animate-float w-[600px] h-[600px] bg-secondary/10 bottom-0 -left-40" style="animation-delay: -5s;"></div>
+<div class="glow-sphere animate-float w-[400px] h-[400px] bg-tertiary/10 top-1/2 left-1/3" style="animation-delay: -12s;"></div>
+</div>
+<main class="z-10 w-full max-w-md px-4 md:px-0">
+<div class="flex flex-col items-center mb-8">
+<div class="w-16 h-16 mb-4 flex items-center justify-center bg-primary/10 rounded-xl border border-primary/30">
+<span class="material-symbols-outlined text-primary text-4xl" style="font-variation-settings: 'FILL' 1;">hub</span>
+</div>
+<h1 class="font-headline-lg text-3xl text-on-surface tracking-tight font-bold">TunnelPro</h1>
+<p class="font-body-md text-on-surface-variant mt-2">مدیریت هوشمند زیرساختهای تونلی</p>
+</div>
+<div class="glass-card rounded-xl p-8 shadow-2xl">
+<h2 class="font-headline-md text-2xl text-on-surface mb-8 text-center font-bold">ورود به پنل مدیریت</h2>
+<div id="error" class="hidden bg-error-container text-on-error-container text-sm rounded-lg p-3 mb-4 text-center font-medium border border-error/20"></div>
+<form class="space-y-6" onsubmit="doLogin(event)">
+<div class="space-y-2">
+<label class="block font-label-sm text-on-surface-variant pr-1">نام کاربری</label>
+<div class="relative group">
+<div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+<span class="material-symbols-outlined text-outline group-focus-within:text-primary transition-colors">person</span>
+</div>
+<input id="username" required class="w-full bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg py-3 pr-12 pl-4 text-on-surface placeholder:text-outline-variant transition-all outline-none" placeholder="admin" type="text"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="block font-label-sm text-on-surface-variant pr-1">رمز عبور</label>
+<div class="relative group">
+<div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+<span class="material-symbols-outlined text-outline group-focus-within:text-primary transition-colors">lock</span>
+</div>
+<input id="password" required class="w-full bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg py-3 pr-12 pl-4 text-on-surface placeholder:text-outline-variant transition-all outline-none" placeholder="••••••••" type="password"/>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<label class="flex items-center cursor-pointer group">
+<input class="w-4 h-4 rounded border-outline-variant bg-surface-container-low text-primary focus:ring-primary focus:ring-offset-surface" type="checkbox"/>
+<span class="mr-2 font-label-sm text-on-surface-variant group-hover:text-on-surface transition-colors">مرا به خاطر بسپار</span>
+</label>
+</div>
+<button id="btn-login" class="w-full py-4 bg-primary-container text-on-primary-container font-bold text-lg rounded-lg btn-glow transition-all active:scale-95 flex items-center justify-center gap-2 group" type="submit">
+<span>ورود به سامانه</span>
+<span class="material-symbols-outlined transform group-hover:-translate-x-1 transition-transform">arrow_back</span>
+</button>
 </form>
-<div class="footer">EMAD1381</div>
+<div class="mt-8 pt-6 border-t border-outline-variant/30 flex justify-center gap-6">
+<div class="flex items-center gap-2 text-on-surface-variant opacity-60">
+<span class="material-symbols-outlined text-sm">security</span>
+<span class="font-label-sm">اتصال امن SSL</span>
+</div>
+<div class="flex items-center gap-2 text-on-surface-variant opacity-60">
+<span class="material-symbols-outlined text-sm">language</span>
+<span class="font-label-sm">فارسی (IR)</span>
+</div>
+</div>
+</div>
+</main>
+<footer class="fixed bottom-0 w-full flex flex-col md:flex-row justify-between items-center px-8 py-6 z-50 opacity-60">
+<div class="font-label-sm text-on-surface-variant text-center md:text-right">© ۲۰۲۴ مدیریت زیرساخت TunnelPro. تمامی حقوق محفوظ است.</div>
+<div class="mt-2 md:mt-0 font-label-technical text-primary">نسخه ۴.۲.۰ - اتصال امن</div>
+</footer>
+<div class="fixed inset-0 pointer-events-none opacity-[0.03] overflow-hidden">
+<div class="w-full h-full bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
 </div>
 <script>
-async function doLogin(e){e.preventDefault();const u=document.getElementById("username").value;const p=document.getElementById("password").value;const btn=document.querySelector(".btn-login");btn.textContent="Authenticating...";btn.style.opacity="0.8";const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success){window.location.href="/"}else{const er=document.getElementById("error");er.textContent=d.error||"Invalid credentials";er.style.display="block";btn.textContent="Sign In to Dashboard";btn.style.opacity="1";}}
+async function doLogin(e){e.preventDefault();const u=document.getElementById("username").value;const p=document.getElementById("password").value;const btn=document.getElementById("btn-login");const btnText=btn.querySelector("span");btnText.textContent="در حال ورود...";btn.style.opacity="0.8";const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success){window.location.href="/"}else{const er=document.getElementById("error");er.textContent=d.error||"نام کاربری یا رمز عبور اشتباه است";er.classList.remove("hidden");btnText.textContent="ورود به سامانه";btn.style.opacity="1";}}
+const inputs = document.querySelectorAll('input');
+inputs.forEach(input => {
+    input.addEventListener('focus', () => {
+        if(input.type==='checkbox') return;
+        input.parentElement.parentElement.classList.add('scale-[1.02]');
+        input.parentElement.parentElement.style.transition = 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
+    });
+    input.addEventListener('blur', () => {
+        if(input.type==='checkbox') return;
+        input.parentElement.parentElement.classList.remove('scale-[1.02]');
+    });
+});
 </script>
-</body>
-</html>"""
+</body></html>"""
 
 
 def get_main_page():
