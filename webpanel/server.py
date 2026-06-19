@@ -57,6 +57,9 @@ def run_cmd(cmd, timeout=30):
         return str(e), 1
 
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
+    if not is_safe_ip_domain(host):
+        return "Invalid SSH host IP/domain name", 1
+
     if user != "root" and cmd.startswith("sudo "):
         if password:
             cmd = f"echo '{password}' | sudo -S {cmd[5:]}"
@@ -92,7 +95,7 @@ def is_safe_svc(name):
 def is_safe_ip_domain(target):
     if not target:
         return False
-    return all(c.isalnum() or c in ".-" for c in target)
+    return all(c.isalnum() or c in ".-:[]" for c in target)
 
 def get_local_ip():
     out, _ = run_cmd("hostname -I 2>/dev/null | awk '{print $1}' || ip route get 1 2>/dev/null | awk '{print $7}'")
@@ -329,6 +332,36 @@ def create_tunnel_on_server(srv, params):
     token = params.get("token", "")
     iran_ip = params.get("iran_ip", "")
     ports_mapping = params.get("ports", "")
+
+    # Strict validation of inputs
+    if role not in ["iran", "kharej"]:
+        return {"success": False, "error": f"Invalid role: {role}"}
+    if transport not in ["tcp", "tcpmux", "wsmux", "wssmux"]:
+        return {"success": False, "error": f"Invalid transport: {transport}"}
+    try:
+        port_num = int(port)
+        if not (1 <= port_num <= 65535):
+            raise ValueError
+        port = str(port_num)
+    except:
+        return {"success": False, "error": f"Invalid port: {port}"}
+    if token:
+        import re
+        if not re.match(r"^[a-zA-Z0-9_-]+$", token):
+            return {"success": False, "error": "Invalid token format"}
+    if role == "kharej" and iran_ip:
+        if not is_safe_ip_domain(iran_ip):
+            return {"success": False, "error": f"Invalid Iran IP/domain: {iran_ip}"}
+    if role == "iran" and ports_mapping:
+        import re
+        rules = re.findall(r'"([^"]+)"', ports_mapping)
+        if not rules:
+            rules = [r.strip() for r in ports_mapping.split(",") if r.strip()]
+        rule_pattern = re.compile(r"^\d+=[a-zA-Z0-9._\[\]:-]+:\d+$")
+        for rule in rules:
+            if not rule_pattern.match(rule):
+                return {"success": False, "error": f"Invalid port mapping format: {rule}"}
+
 
     if not token:
         tok_out, _ = remote_exec(srv, "cat /proc/sys/kernel/random/uuid 2>/dev/null || head -c 32 /dev/urandom | base64")
@@ -821,11 +854,28 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             kharej_ip = kharej_srv.get("ip")
             if kharej_ip in ["localhost", "127.0.0.1", ""]:
                 kharej_ip = "127.0.0.1"
-            remote_exec(kharej_srv, f"python3 -m http.server {test_port} > /dev/null 2>&1 & echo $! > /tmp/test_pid", timeout=5)
+            if not is_safe_ip_domain(kharej_ip):
+                self.send_json({"error": "invalid target IP or domain name"}, 400)
+                return
+            
+            # Start diagnostics server inside an empty isolated temporary directory to prevent directory listing exposure
+            start_cmd = (
+                f"bash -c \"TEST_DIR=\\$(mktemp -d) && cd \\$TEST_DIR && "
+                f"nohup python3 -m http.server {test_port} > /dev/null 2>&1 & echo \\$! > /tmp/test_pid\""
+            )
+            remote_exec(kharej_srv, start_cmd, timeout=5)
             time.sleep(1)
             curl_out, curl_code = remote_exec(iran_srv, f"curl -m 5 -s http://{kharej_ip}:{test_port} | head -n 1", timeout=10)
             tcp_open = "Directory listing" in curl_out or curl_code == 0
-            remote_exec(kharej_srv, "kill -9 $(cat /tmp/test_pid) 2>/dev/null || true", timeout=5)
+            
+            # Kill the background process securely by PID, port, and process pattern
+            kill_cmd = (
+                f"bash -c \"[ -f /tmp/test_pid ] && kill -9 \\$(cat /tmp/test_pid) 2>/dev/null; "
+                f"fuser -k -n tcp {test_port} 2>/dev/null; "
+                f"pkill -9 -f 'python3 -m http.server {test_port}' 2>/dev/null; "
+                f"rm -f /tmp/test_pid\""
+            )
+            remote_exec(kharej_srv, kill_cmd, timeout=5)
             ping_out, ping_code = remote_exec(iran_srv, f"ping -c 5 -W 2 {kharej_ip}", timeout=15)
             loss = "100%"
             avg = "N/A"
@@ -901,7 +951,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                     config_name = svc.replace("backhaul-", "").replace(".service", "")
                     remote_exec(srv, f"cp {INSTALL_DIR}/{config_name}.toml {BACKUP_DIR}/ 2>/dev/null")
                     remote_exec(srv, f"rm -f {INSTALL_DIR}/{config_name}.toml {SERVICE_DIR}/{svc}")
-                    remote_exec(srv, f"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -")
+                    remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
                     remote_exec(srv, "systemctl daemon-reload")
                     self.send_json({"success": True})
                 else:
@@ -989,12 +1039,11 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"error": "server not found"}, 404)
                 return
             if action == "remove":
-                remote_exec(srv, f"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -")
+                remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
                 remote_exec(srv, f"rm -f {CRON_CONFIG_DIR}/{svc}.conf")
             elif interval > 0:
-                remote_exec(srv, f"mkdir -p {CRON_CONFIG_DIR}")
-                remote_exec(srv, f"echo -e 'SERVICE={svc}\\nINTERVAL={interval}' > {CRON_CONFIG_DIR}/{svc}.conf")
-                remote_exec(srv, f"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > /tmp/cron_tmp; echo '*/{interval} * * * * systemctl restart {svc} {CRON_MARKER} {svc}' >> /tmp/cron_tmp; crontab /tmp/cron_tmp; rm -f /tmp/cron_tmp")
+                remote_exec(srv, f"bash -c \"mkdir -p {CRON_CONFIG_DIR} && echo -e 'SERVICE={svc}\\nINTERVAL={interval}' > {CRON_CONFIG_DIR}/{svc}.conf\"")
+                remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > /tmp/cron_tmp; echo '*/{interval} * * * * systemctl restart {svc} {CRON_MARKER} {svc}' >> /tmp/cron_tmp; crontab /tmp/cron_tmp; rm -f /tmp/cron_tmp\"")
             self.send_json({"success": True})
             return
 
@@ -1668,7 +1717,7 @@ const iranSrv=servers.find(s=>s.id===selectedIran); const kharejSrv=servers.find
 if(!iranSrv||!kharejSrv){showToast("Select both servers first","error");wizardNext(1);return}
 const portsRaw=document.getElementById("wiz-ports").value.trim();
 let portsArr=[];
-if(portsRaw){portsArr=portsRaw.split(",").map(p=>p.trim()).filter(Boolean).map(p=>{if(/^\\\\d+$/.test(p))return p+"=127.0.0.1:"+p;return p});}
+if(portsRaw){portsArr=portsRaw.split(",").map(p=>p.trim()).filter(Boolean).map(p=>{if(/^[0-9]+$/.test(p))return p+"=127.0.0.1:"+p;return p});}
 const params={
 iran_server:iranSrv,kharej_server:kharejSrv,
 transport:document.getElementById("wiz-transport").value,

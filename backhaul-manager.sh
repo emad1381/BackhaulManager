@@ -930,7 +930,7 @@ menu_create_tunnel() {
                 warn "Invalid port mapping: '${pm}'"
                 continue
             fi
-            if [[ ! "$target_host" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+            if [[ ! "$target_host" =~ ^[A-Za-z0-9._\[\]:-]+$ ]]; then
                 warn "Invalid target host in mapping: '${target_host}'"
                 continue
             fi
@@ -2250,6 +2250,21 @@ menu_webpanel() {
         1)
             if [[ -n "$running_pid" ]]; then
                 warn "Web Panel is already running."
+                press_enter; continue
+            fi
+
+            # Check if systemd service is enabled, start it via systemctl to avoid race/port conflicts
+            if systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
+                info "Web Panel is configured as a systemd service. Starting via systemd..."
+                systemctl restart backhaul-webpanel
+                sleep 2
+                if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                    success "Web Panel started via systemd!"
+                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                    echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                else
+                    warn "Failed to start via systemd. Check: journalctl -u backhaul-webpanel"
+                fi
                 press_enter; continue
             fi
 
