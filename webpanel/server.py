@@ -1356,9 +1356,7 @@ def get_login_page():
 </div>
 </div>
 </main>
-<footer class="fixed bottom-0 w-full flex flex-col md:flex-row justify-center items-center px-8 py-6 z-50 opacity-60">
-<div class="font-label-sm text-on-surface-variant text-center">© ۲۰۲۴ مدیریت زیرساخت TunnelPro. تمامی حقوق محفوظ است.</div>
-</footer>
+
 <div class="fixed inset-0 pointer-events-none opacity-[0.03] overflow-hidden">
 <div class="w-full h-full bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
 </div>
