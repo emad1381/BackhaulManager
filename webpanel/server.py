@@ -12,6 +12,8 @@ import os
 import subprocess
 import sys
 import time
+import socketserver
+import concurrent.futures
 import urllib.parse
 from http.cookies import SimpleCookie
 import secrets
@@ -616,7 +618,8 @@ systemctl is-active {svc_name} 2>/dev/null
     }
 
 
-class ReuseAddrHTTPServer(http.server.HTTPServer):
+class ReuseAddrHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
     allow_reuse_address = True
     allow_reuse_port = True
 
@@ -698,10 +701,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/servers":
             data = load_servers()
-            result = []
-            for srv in data.get("servers", []):
-                info = get_server_info(srv)
-                result.append(info)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                result = list(executor.map(get_server_info, data.get("servers", [])))
             self.send_json({"servers": result})
             return
 
@@ -712,9 +713,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/tunnels":
             data = load_servers()
             all_tunnels = []
-            for srv in data.get("servers", []):
-                tunnels = get_tunnels_from_server(srv)
-                all_tunnels.extend(tunnels)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                for tunnels in executor.map(get_tunnels_from_server, data.get("servers", [])):
+                    all_tunnels.extend(tunnels)
             self.send_json({"tunnels": all_tunnels})
             return
 
@@ -2006,7 +2007,8 @@ async function tunnelActionBoth(action, trans, port, iranId, kharejId){
   const p1 = iranId ? api("/api/tunnel/action",{service:`backhaul-iran-${trans}-${port}.service`,action:action,server_id:iranId}) : Promise.resolve();
   const p2 = kharejId ? api("/api/tunnel/action",{service:`backhaul-kharej-${trans}-${port}.service`,action:action,server_id:kharejId}) : Promise.resolve();
   await Promise.all([p1, p2]);
-  setTimeout(()=>{refreshAll();showToast("Action completed","success")},2000);
+  refreshAll();
+  showToast("Action completed","success");
 }
 
 async function doDeleteBoth(trans, port, iranId, kharejId){
@@ -2022,7 +2024,8 @@ async function doDeleteBoth(trans, port, iranId, kharejId){
 async function tunnelAction(action,svc,server_id){
 showToast(action.toUpperCase()+" command sent...","info");
 await api("/api/tunnel/action",{service:svc,action:action,server_id:server_id});
-setTimeout(()=>{refreshAll();showToast("Action completed","success")},2000);
+refreshAll();
+showToast("Action completed","success");
 }
 
 async function doDelete(svc,server_id){
