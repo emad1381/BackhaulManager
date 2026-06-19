@@ -1761,30 +1761,72 @@ if(!d)return;
 const list=document.getElementById("dashboard-tunnels"); const tl=document.getElementById("all-tunnels");
 const tunnels=d.tunnels||[];
 if(tunnels.length===0){const h='<div class="empty"><div class="icon">🔍</div><p>No active tunnels discovered.</p></div>';list.innerHTML=h;tl.innerHTML=h;return}
-const html=tunnels.map(t=>{
-const sc=t.status==="running"?"running":"stopped";
-const cb=t.cron_active?`<span class="cron-badge">↻ ${t.cron_interval}m</span>`:"";
+const paired={};
+tunnels.forEach(t=>{
+  const match=t.service.match(/^backhaul-(iran|kharej)-(.+)-([0-9]+)(?:\\.service)?$/);
+  if(match){
+    const role=match[1]; const trans=match[2]; const port=match[3]; const key=trans+"-"+port;
+    if(!paired[key])paired[key]={key:key,trans:trans,port:port,iran:null,kharej:null};
+    paired[key][role]=t;
+  }else{
+    paired[t.service]={key:t.service,single:t};
+  }
+});
+const html=Object.values(paired).map(p=>{
+if(p.single){
+  const t=p.single; const sc=t.status==="running"?"running":"stopped";
+  return `<div class="tunnel-item"><div class="tunnel-left"><div class="tunnel-status ${sc}"></div><div><div class="tunnel-name">${t.service}</div></div></div></div>`;
+}
+
+const iran=p.iran; const kharej=p.kharej;
+const iranStat=iran&&iran.status==="running"; const kharejStat=kharej&&kharej.status==="running";
+let sc="stopped"; if(iranStat&&kharejStat)sc="running"; else if(iranStat||kharejStat)sc="warning";
+const tName=`${p.trans.toUpperCase()} : ${p.port}`;
+const iranSrvName=iran?iran.server_name:"Missing Iran Node";
+const kharejSrvName=kharej?kharej.server_name:"Missing Kharej Node";
+const cb=(iran&&iran.cron_active)?`<span class="cron-badge">↻ ${iran.cron_interval}m</span>`:"";
+
+let actionsHtml="";
+if(sc==="stopped"||sc==="warning"){
+  actionsHtml+=`<button class="icon-btn start" title="Start Tunnel" onclick="tunnelActionBoth('start','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">▶</button>`;
+}
+if(sc==="running"||sc==="warning"){
+  actionsHtml+=`<button class="icon-btn stop" title="Stop Tunnel" onclick="tunnelActionBoth('stop','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">⏹</button>`;
+}
+actionsHtml+=`<button class="icon-btn restart" title="Restart Tunnel" onclick="tunnelActionBoth('restart','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">🔄</button>`;
+
+const primaryId=iran?iran.server_id:(kharej?kharej.server_id:'');
+const primarySvc=iran?iran.service:(kharej?kharej.service:'');
+actionsHtml+=`<button class="icon-btn" title="Logs (Primary)" onclick="showLogs('${primarySvc}','${primaryId}')">📄</button>`;
+actionsHtml+=`<button class="icon-btn" title="Edit Config (Primary)" onclick="showConfig('${primarySvc}','${primaryId}')">✏️</button>`;
+if(iran) actionsHtml+=`<button class="icon-btn" title="Auto Restart" onclick="showCron('${primarySvc}','${primaryId}',${iran.cron_active},'${iran.cron_interval}')">⏱</button>`;
+actionsHtml+=`<button class="icon-btn delete" title="Delete" onclick="doDeleteBoth('${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">🗑</button>`;
+
 return `<div class="tunnel-item">
 <div class="tunnel-left">
-<div class="tunnel-status ${sc}"></div>
+<div class="tunnel-status ${sc}" style="${sc==='warning'?'background:var(--warning);color:var(--warning);box-shadow:0 0 10px var(--warning);':''}"></div>
 <div>
-<div class="tunnel-name">${t.service} <span class="tunnel-server-tag">${t.server_name}</span>${cb}</div>
-<div class="tunnel-meta">
-<span><b style="color:var(--primary)">Protocol:</b> ${t.transport.toUpperCase()}</span><span><b style="color:var(--secondary)">Bind:</b> ${t.bind_addr}</span><span><b>CPU:</b> ${t.cpu}%</span><span><b>Mem:</b> ${t.memory}</span>
+<div class="tunnel-name">${tName} ${cb}</div>
+<div class="tunnel-meta" style="margin-top:10px;">
+<span style="background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
+  <span class="role-badge iran" style="margin-right:6px">IRAN</span> ${iranSrvName}
+</span>
+<span style="color:var(--text-muted);font-size:16px;">⚡</span>
+<span style="background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
+  <span class="role-badge kharej" style="margin-right:6px">KHAREJ</span> ${kharejSrvName}
+</span>
+</div>
+<div class="tunnel-meta" style="margin-top:10px;">
+<span style="color:var(--text-dark);font-size:12px;">IRAN CPU: ${iran?iran.cpu+"%":"—"} | Mem: ${iran?iran.memory:"—"}</span>
+<span style="color:var(--text-dark);font-size:12px;">KHAREJ CPU: ${kharej?kharej.cpu+"%":"—"} | Mem: ${kharej?kharej.memory:"—"}</span>
 </div>
 </div>
 </div>
 <div class="tunnel-actions">
-<button class="icon-btn start" title="Start" onclick="tunnelAction('start','${t.service}','${t.server_id}')">▶</button>
-<button class="icon-btn stop" title="Stop" onclick="tunnelAction('stop','${t.service}','${t.server_id}')">⏹</button>
-<button class="icon-btn restart" title="Restart" onclick="tunnelAction('restart','${t.service}','${t.server_id}')">🔄</button>
-<button class="icon-btn ping" title="Live Ping" onclick="doPing('${t.service}','${t.server_id}','${t.bind_addr}')">🏓</button>
-<button class="icon-btn" title="Logs" onclick="showLogs('${t.service}','${t.server_id}')">📄</button>
-<button class="icon-btn" title="Edit Config" onclick="showConfig('${t.service}','${t.server_id}')">✏️</button>
-<button class="icon-btn" title="Auto Restart" onclick="showCron('${t.service}','${t.server_id}',${t.cron_active},'${t.cron_interval}')">⏱</button>
-<button class="icon-btn delete" title="Delete" onclick="doDelete('${t.service}','${t.server_id}')">🗑</button>
+${actionsHtml}
 </div>
-</div>`}).join("");
+</div>`;
+}).join("");
 list.innerHTML=html;tl.innerHTML=html;
 });
 }
@@ -1818,8 +1860,8 @@ if(r&&r.success){
 dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(16,185,129,0.5)">✅</div><div style="font-size:20px;font-weight:600;color:var(--success)">Tunnel Established Successfully!</div>
 <div style="margin-top:24px;text-align:left;background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:16px;padding:20px;font-size:14px">
 <div style="margin-bottom:10px"><strong>Secret Token:</strong> <span style="color:var(--primary);font-family:monospace">${r.token}</span></div>
-<div style="margin-bottom:10px"><strong>Listen Port:</strong> ${r.port}</div>
-<div style="margin-bottom:16px"><strong>Transport:</strong> ${r.transport.toUpperCase()}</div>
+<div style="margin-bottom:10px"><strong>Listen Port:</strong> ${params.port}</div>
+<div style="margin-bottom:16px"><strong>Transport:</strong> ${params.transport.toUpperCase()}</div>
 <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px">
 <div><span class="role-badge iran">IRAN</span> ${r.iran?"🟢 "+r.iran.service:"🔴 Failed"}</div>
 <div><span class="role-badge kharej">KHAREJ</span> ${r.kharej?"🟢 "+r.kharej.service:"🔴 Failed"}</div>
@@ -1837,6 +1879,24 @@ ${errDetails}
 <div style="margin-top:24px"><button class="btn btn-outline" onclick="wizardNext(1)" style="width:100%">Try Again</button></div></div>`;
 showToast("Tunnel creation failed","error");
 }
+}
+
+async function tunnelActionBoth(action, trans, port, iranId, kharejId){
+  showToast(action.toUpperCase()+" command sent to both servers...","info");
+  const p1 = iranId ? api("/api/tunnel/action",{service:`backhaul-iran-${trans}-${port}.service`,action:action,server_id:iranId}) : Promise.resolve();
+  const p2 = kharejId ? api("/api/tunnel/action",{service:`backhaul-kharej-${trans}-${port}.service`,action:action,server_id:kharejId}) : Promise.resolve();
+  await Promise.all([p1, p2]);
+  setTimeout(()=>{refreshAll();showToast("Action completed","success")},2000);
+}
+
+async function doDeleteBoth(trans, port, iranId, kharejId){
+  if(!confirm(`Are you sure you want to permanently delete the ${trans}:${port} tunnel from both servers?`))return;
+  showToast("Deleting tunnel from both servers...","info");
+  const p1 = iranId ? api("/api/tunnel/delete",{service:`backhaul-iran-${trans}-${port}.service`,server_id:iranId}) : Promise.resolve();
+  const p2 = kharejId ? api("/api/tunnel/delete",{service:`backhaul-kharej-${trans}-${port}.service`,server_id:kharejId}) : Promise.resolve();
+  await Promise.all([p1, p2]);
+  showToast("Tunnel deleted completely","success");
+  refreshAll();
 }
 
 async function tunnelAction(action,svc,server_id){
