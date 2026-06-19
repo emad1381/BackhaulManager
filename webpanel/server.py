@@ -221,45 +221,35 @@ def get_tunnels_from_server(srv):
     is_local = host in ["127.0.0.1", "localhost", get_local_ip()]
 
     tunnels = []
+
     if is_local:
         out, _ = run_cmd("systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u")
-    else:
-        out, _ = run_ssh(host, user, key, sudo_cmd(user, "systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u"), password=password, port=port)
+        if not out:
+            return tunnels
 
-    if not out:
-        return tunnels
+        for svc in out.split('\n'):
+            svc = svc.strip()
+            if not svc:
+                continue
 
-    for svc in out.split('\n'):
-        svc = svc.strip()
-        if not svc:
-            continue
-
-        if is_local:
             status_out, _ = run_cmd(f"systemctl is-active {svc} 2>/dev/null")
             pid_out, _ = run_cmd(f"systemctl show -p MainPID --value {svc} 2>/dev/null")
             cpu_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
             mem_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
             up_out, _ = run_cmd(f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null") if pid_out.strip() not in ["0", ""] else ("", 1)
-        else:
-            status_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"systemctl is-active {svc} 2>/dev/null"), password=password, port=port)
-            pid_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"systemctl show -p MainPID --value {svc} 2>/dev/null"), password=password, port=port)
-            cpu_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o %cpu= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
-            mem_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o rss= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
-            up_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"ps -p $(systemctl show -p MainPID --value {svc} 2>/dev/null) -o etime= 2>/dev/null"), password=password, port=port) if pid_out.strip() not in ["0", ""] else ("", 1)
 
-        cpu = cpu_out.strip() if cpu_out else "—"
-        try:
-            mem_val = int(mem_out.strip()) if mem_out.strip() else 0
-            mem = f"{mem_val/1024:.1f}M"
-        except:
-            mem = "—"
-        uptime_s = up_out.strip() if up_out else "—"
+            cpu = cpu_out.strip() if cpu_out else "—"
+            try:
+                mem_val = int(mem_out.strip()) if mem_out.strip() else 0
+                mem = f"{mem_val/1024:.1f}M"
+            except:
+                mem = "—"
+            uptime_s = up_out.strip() if up_out else "—"
 
-        transport, bind_addr = "?", "?"
-        config_name = svc.replace("backhaul-", "").replace(".service", "")
-        config_path = f"{INSTALL_DIR}/{config_name}.toml"
+            transport, bind_addr = "?", "?"
+            config_name = svc.replace("backhaul-", "").replace(".service", "")
+            config_path = f"{INSTALL_DIR}/{config_name}.toml"
 
-        if is_local:
             if os.path.exists(config_path):
                 try:
                     with open(config_path) as f:
@@ -270,19 +260,10 @@ def get_tunnels_from_server(srv):
                                 bind_addr = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
                 except:
                     pass
-        else:
-            cfg_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"cat {config_path} 2>/dev/null"), password=password, port=port)
-            if cfg_out:
-                for line in cfg_out.split('\n'):
-                    if 'transport' in line and '=' in line:
-                        transport = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
-                    if 'bind_addr' in line or 'remote_addr' in line:
-                        bind_addr = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
 
-        cron_active = False
-        cron_interval = ""
-        cron_conf = f"{CRON_CONFIG_DIR}/{svc}.conf"
-        if is_local:
+            cron_active = False
+            cron_interval = ""
+            cron_conf = f"{CRON_CONFIG_DIR}/{svc}.conf"
             if os.path.exists(cron_conf):
                 try:
                     with open(cron_conf) as f:
@@ -292,17 +273,86 @@ def get_tunnels_from_server(srv):
                                 cron_active = True
                 except:
                     pass
-        else:
-            cron_out, _ = run_ssh(host, user, key, sudo_cmd(user, f"cat {cron_conf} 2>/dev/null | grep INTERVAL"), password=password, port=port)
-            if cron_out:
-                cron_interval = cron_out.split("=")[1].strip() if "=" in cron_out else ""
-                cron_active = bool(cron_interval)
+
+            tunnels.append({
+                "server_id": srv.get("id", ""),
+                "server_name": srv.get("name", ""),
+                "service": svc,
+                "status": "running" if status_out.strip() == "active" else "stopped",
+                "cpu": cpu,
+                "memory": mem,
+                "uptime": uptime_s,
+                "transport": transport,
+                "bind_addr": bind_addr,
+                "cron_active": cron_active,
+                "cron_interval": cron_interval
+            })
+
+        return tunnels
+
+    # --- REMOTE: single SSH call gathers ALL tunnel data at once ---
+    gather_script = f"""bash -c '
+SVCS=$(systemctl list-unit-files --type=service 2>/dev/null | grep -o "backhaul[^ ]*\\.service" | sort -u)
+[ -z "$SVCS" ] && exit 0
+for svc in $SVCS; do
+  STATUS=$(systemctl is-active "$svc" 2>/dev/null)
+  PID=$(systemctl show -p MainPID --value "$svc" 2>/dev/null)
+  CPU=""; MEM=""; UPTIME=""
+  if [ "$PID" != "0" ] && [ -n "$PID" ]; then
+    CPU=$(ps -p "$PID" -o %cpu= 2>/dev/null)
+    MEM=$(ps -p "$PID" -o rss= 2>/dev/null)
+    UPTIME=$(ps -p "$PID" -o etime= 2>/dev/null)
+  fi
+  CFG_NAME=$(echo "$svc" | sed "s/^backhaul-//;s/\\.service$//")
+  CFG_PATH="{INSTALL_DIR}/$CFG_NAME.toml"
+  TRANSPORT="?"; BIND="?"
+  if [ -f "$CFG_PATH" ]; then
+    TRANSPORT=$(grep "transport" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
+    [ -z "$TRANSPORT" ] && TRANSPORT="?"
+    BIND=$(grep -E "bind_addr|remote_addr" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
+    [ -z "$BIND" ] && BIND="?"
+  fi
+  CRON_INT=""
+  CRON_CONF="{CRON_CONFIG_DIR}/$svc.conf"
+  if [ -f "$CRON_CONF" ]; then
+    CRON_INT=$(grep "^INTERVAL=" "$CRON_CONF" 2>/dev/null | cut -d= -f2)
+  fi
+  echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT"
+done
+'"""
+
+    out, _ = run_ssh(host, user, key, sudo_cmd(user, gather_script), password=password, port=port, timeout=30)
+    if not out:
+        return tunnels
+
+    for line in out.split('\n'):
+        line = line.strip()
+        if not line.startswith("SVC_DATA:"):
+            continue
+        parts = line[9:].split("|", 7)
+        if len(parts) < 8:
+            parts.extend([""] * (8 - len(parts)))
+
+        svc, status_raw, cpu_raw, mem_raw, uptime_raw, transport, bind_addr, cron_int = parts
+
+        cpu = cpu_raw.strip() if cpu_raw.strip() else "—"
+        try:
+            mem_val = int(mem_raw.strip()) if mem_raw.strip() else 0
+            mem = f"{mem_val/1024:.1f}M"
+        except:
+            mem = "—"
+        uptime_s = uptime_raw.strip() if uptime_raw.strip() else "—"
+        transport = transport.strip() if transport.strip() else "?"
+        bind_addr = bind_addr.strip() if bind_addr.strip() else "?"
+
+        cron_active = bool(cron_int.strip())
+        cron_interval = cron_int.strip()
 
         tunnels.append({
             "server_id": srv.get("id", ""),
             "server_name": srv.get("name", ""),
-            "service": svc,
-            "status": "running" if status_out.strip() == "active" else "stopped",
+            "service": svc.strip(),
+            "status": "running" if status_raw.strip() == "active" else "stopped",
             "cpu": cpu,
             "memory": mem,
             "uptime": uptime_s,
@@ -371,55 +421,9 @@ def create_tunnel_on_server(srv, params):
     config_file = f"{INSTALL_DIR}/{role}-{transport}-{port}.toml"
     service_file = f"{SERVICE_DIR}/{svc_name}.service"
 
-    remote_exec(srv, f"mkdir -p {INSTALL_DIR} {BACKUP_DIR}")
+    is_local = srv.get("ip", "") in ["127.0.0.1", "localhost", get_local_ip()]
 
-    # Auto-install binary if it doesn't exist or is not executable on target
-    binary_check, _ = remote_exec(srv, f"test -x {BINARY} && echo ok")
-    if binary_check.strip() != "ok":
-        arch_out, _ = remote_exec(srv, "uname -m")
-        arch = arch_out.strip()
-        if "aarch64" in arch or "arm64" in arch:
-            asset = "backhaul_linux_arm64.tar.gz"
-        else:
-            asset = "backhaul_linux_amd64.tar.gz"
-        urls = [
-            f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
-            f"https://mirror.ghproxy.com/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
-            f"https://ghproxy.net/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
-        ]
-        c1 = 1
-        out1 = "No download attempt made"
-        for idx, url in enumerate(urls):
-            if idx > 0:
-                print(f"[{srv.get('ip') or srv.get('name')}] Direct download failed. Trying mirror proxy: {url}")
-            out1, c1 = remote_exec(srv, f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
-            if c1 == 0:
-                break
-        if c1 != 0:
-            return {
-                "success": False,
-                "error": f"Failed to download Backhaul binary on {srv.get('name') or srv.get('ip')}: {out1}"
-            }
-        out2, c2 = remote_exec(srv, f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
-        if c2 != 0:
-            return {
-                "success": False,
-                "error": f"Failed to extract Backhaul archive on {srv.get('name') or srv.get('ip')}: {out2}"
-            }
-        remote_exec(srv, f"cp /tmp/backhaul {BINARY}")
-        remote_exec(srv, f"chmod +x {BINARY}")
-        remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
-
-    if transport == "wssmux":
-        remote_exec(srv, f"mkdir -p {CERT_DIR}")
-        cert_check, _ = remote_exec(srv, f"test -f {CERT_DIR}/wssmux.crt && echo ok")
-        if cert_check != "ok":
-            remote_exec(srv, f'openssl req -x509 -newkey rsa:2048 -keyout {CERT_DIR}/wssmux.key -out {CERT_DIR}/wssmux.crt -days 3650 -nodes -subj "/CN=backhaul-wssmux" 2>/dev/null')
-
-    check_cfg, _ = remote_exec(srv, f"test -f {config_file} && echo yes")
-    if check_cfg.strip() == "yes":
-        remote_exec(srv, f"cp {config_file} {BACKUP_DIR}/$(basename {config_file}).bak.$(date +%Y%m%d-%H%M%S)")
-
+    # --- Build config content (common to local and remote) ---
     if role == "iran":
         config_lines = [
             "[server]",
@@ -467,22 +471,6 @@ def create_tunnel_on_server(srv, params):
 
     config_content = "\n".join(config_lines) + "\n"
 
-    is_local = srv.get("ip", "") in ["127.0.0.1", "localhost", get_local_ip()]
-    if is_local:
-        os.makedirs(INSTALL_DIR, exist_ok=True)
-        with open(config_file, 'w') as f:
-            f.write(config_content)
-    else:
-        host = srv["ip"]
-        user = srv.get("ssh_user", "root")
-        key = srv.get("ssh_key", "")
-        password = srv.get("ssh_password", "")
-        ssh_port = srv.get("ssh_port", 22)
-        delim = f"DELIM_{secrets.token_hex(8)}"
-        remote_exec(srv, f"mkdir -p {INSTALL_DIR}")
-        cmd_write = f"cat << '{delim}' | {sudo_cmd(user, f'tee {config_file} >/dev/null')}\n{config_content}{delim}"
-        run_ssh(host, user, key, cmd_write, password=password, port=ssh_port)
-
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
 Description={descriptions.get(transport, "Backhaul Tunnel")} - {role.capitalize()} port {port}
@@ -503,24 +491,119 @@ WantedBy=multi-user.target
 """
 
     if is_local:
+        # --- LOCAL: keep direct file operations ---
+        os.makedirs(INSTALL_DIR, exist_ok=True)
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+
+        # Binary check + install
+        binary_check, _ = run_cmd(f"test -x {BINARY} && echo ok")
+        if binary_check.strip() != "ok":
+            arch_out, _ = run_cmd("uname -m")
+            arch = arch_out.strip()
+            asset = "backhaul_linux_arm64.tar.gz" if ("aarch64" in arch or "arm64" in arch) else "backhaul_linux_amd64.tar.gz"
+            urls = [
+                f"https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+                f"https://mirror.ghproxy.com/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}",
+                f"https://ghproxy.net/https://github.com/Musixal/Backhaul/releases/latest/download/{asset}"
+            ]
+            c1 = 1
+            out1 = "No download attempt made"
+            for idx, url in enumerate(urls):
+                out1, c1 = run_cmd(f"wget -q -O /tmp/{asset} '{url}' 2>/dev/null || curl -sL -o /tmp/{asset} '{url}' 2>/dev/null", timeout=120)
+                if c1 == 0:
+                    break
+            if c1 != 0:
+                return {"success": False, "error": f"Failed to download Backhaul binary: {out1}"}
+            out2, c2 = run_cmd(f"tar -xzf /tmp/{asset} -C /tmp/ 2>/dev/null", timeout=60)
+            if c2 != 0:
+                return {"success": False, "error": f"Failed to extract Backhaul archive: {out2}"}
+            run_cmd(f"cp /tmp/backhaul {BINARY} && chmod +x {BINARY} && rm -rf /tmp/backhaul /tmp/{asset}")
+
+        if transport == "wssmux":
+            os.makedirs(CERT_DIR, exist_ok=True)
+            cert_check, _ = run_cmd(f"test -f {CERT_DIR}/wssmux.crt && echo ok")
+            if cert_check.strip() != "ok":
+                run_cmd(f'openssl req -x509 -newkey rsa:2048 -keyout {CERT_DIR}/wssmux.key -out {CERT_DIR}/wssmux.crt -days 3650 -nodes -subj "/CN=backhaul-wssmux" 2>/dev/null')
+
+        # Backup existing config
+        if os.path.exists(config_file):
+            run_cmd(f"cp {config_file} {BACKUP_DIR}/$(basename {config_file}).bak.$(date +%Y%m%d-%H%M%S)")
+
+        with open(config_file, 'w') as f:
+            f.write(config_content)
         with open(service_file, 'w') as f:
             f.write(service_content)
+
+        run_cmd("systemctl daemon-reload")
+        run_cmd(f"systemctl enable {svc_name} 2>/dev/null")
+        run_cmd(f"systemctl restart {svc_name}")
+
+        time.sleep(1)
+        status_out, _ = run_cmd(f"systemctl is-active {svc_name} 2>/dev/null")
+
     else:
+        # --- REMOTE: batch everything into minimal SSH calls ---
         host = srv["ip"]
         user = srv.get("ssh_user", "root")
         key = srv.get("ssh_key", "")
         password = srv.get("ssh_password", "")
         ssh_port = srv.get("ssh_port", 22)
-        delim = f"DELIM_{secrets.token_hex(8)}"
-        cmd_write_svc = f"cat << '{delim}' | {sudo_cmd(user, f'tee {service_file} >/dev/null')}\n{service_content}{delim}"
-        run_ssh(host, user, key, cmd_write_svc, password=password, port=ssh_port)
 
-    remote_exec(srv, "systemctl daemon-reload")
-    remote_exec(srv, f"systemctl enable {svc_name} 2>/dev/null")
-    remote_exec(srv, f"systemctl restart {svc_name}")
+        # Step 1: Binary check + install (single SSH call with fallback URLs built in)
+        binary_check, _ = remote_exec(srv, f"test -x {BINARY} && echo ok")
+        if binary_check.strip() != "ok":
+            # Single SSH call: detect arch, try multiple URLs, extract, install
+            install_script = f"""bash -c '
+ARCH=$(uname -m)
+if echo "$ARCH" | grep -qE "aarch64|arm64"; then ASSET="backhaul_linux_arm64.tar.gz"; else ASSET="backhaul_linux_amd64.tar.gz"; fi
+URLS="https://github.com/Musixal/Backhaul/releases/latest/download/$ASSET https://mirror.ghproxy.com/https://github.com/Musixal/Backhaul/releases/latest/download/$ASSET https://ghproxy.net/https://github.com/Musixal/Backhaul/releases/latest/download/$ASSET"
+DL_OK=0
+for URL in $URLS; do
+  wget -q -O /tmp/$ASSET "$URL" 2>/dev/null || curl -sL -o /tmp/$ASSET "$URL" 2>/dev/null
+  if [ $? -eq 0 ] && [ -s /tmp/$ASSET ]; then DL_OK=1; break; fi
+done
+if [ "$DL_OK" -ne 1 ]; then echo "DOWNLOAD_FAILED"; exit 1; fi
+tar -xzf /tmp/$ASSET -C /tmp/ 2>/dev/null
+if [ $? -ne 0 ]; then echo "EXTRACT_FAILED"; exit 1; fi
+cp /tmp/backhaul {BINARY} && chmod +x {BINARY}
+rm -rf /tmp/backhaul /tmp/$ASSET
+echo "INSTALL_OK"
+'"""
+            install_out, install_rc = run_ssh(host, user, key, sudo_cmd(user, install_script), password=password, port=ssh_port, timeout=120)
+            if install_rc != 0 or "INSTALL_OK" not in install_out:
+                err_msg = "Failed to download binary" if "DOWNLOAD_FAILED" in install_out else "Failed to extract binary" if "EXTRACT_FAILED" in install_out else f"Binary installation failed: {install_out}"
+                return {"success": False, "error": err_msg}
 
-    time.sleep(2)
-    status_out, _ = remote_exec(srv, f"systemctl is-active {svc_name} 2>/dev/null")
+        # Step 2: Deploy config + service + start (single SSH call)
+        delim_cfg = f"DELIM_CFG_{secrets.token_hex(8)}"
+        delim_svc = f"DELIM_SVC_{secrets.token_hex(8)}"
+
+        cert_cmds = ""
+        if transport == "wssmux":
+            cert_cmds = f"""
+mkdir -p {CERT_DIR}
+if [ ! -f {CERT_DIR}/wssmux.crt ]; then
+  openssl req -x509 -newkey rsa:2048 -keyout {CERT_DIR}/wssmux.key -out {CERT_DIR}/wssmux.crt -days 3650 -nodes -subj "/CN=backhaul-wssmux" 2>/dev/null
+fi"""
+
+        deploy_script = f"""bash -c '
+mkdir -p {INSTALL_DIR} {BACKUP_DIR}
+{cert_cmds}
+if [ -f {config_file} ]; then
+  cp {config_file} {BACKUP_DIR}/$(basename {config_file}).bak.$(date +%Y%m%d-%H%M%S) 2>/dev/null
+fi
+cat > {config_file} << '"'"'{delim_cfg}'"'"'
+{config_content}{delim_cfg}
+cat > {service_file} << '"'"'{delim_svc}'"'"'
+{service_content}{delim_svc}
+systemctl daemon-reload
+systemctl enable {svc_name} 2>/dev/null
+systemctl restart {svc_name}
+sleep 1
+systemctl is-active {svc_name} 2>/dev/null
+'"""
+        deploy_out, _ = run_ssh(host, user, key, sudo_cmd(user, deploy_script), password=password, port=ssh_port, timeout=60)
+        status_out = deploy_out.strip().split('\n')[-1] if deploy_out else ""
 
     return {
         "success": status_out.strip() == "active",
@@ -1419,7 +1502,10 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x:
 </div>
 <div class="form-row">
 <div class="form-group"><label>Authentication Token</label><input id="wiz-token" placeholder="Leave empty to auto-generate"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Secure 32-char token will be generated if empty</small></div>
-<div class="form-group"><label>Port Forwarding Rules (Iran)</label><input id="wiz-ports" placeholder="e.g. 443=127.0.0.1:443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Comma separated: listen_port=target_ip:target_port</small></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>🇮🇷 Iran Port (Listen)</label><input id="wiz-iran-port" type="number" value="443" min="1" max="65535" placeholder="e.g. 443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Port to listen on the Iran server</small></div>
+<div class="form-group"><label>🌍 Kharej Port (Target)</label><input id="wiz-kharej-port" type="number" value="443" min="1" max="65535" placeholder="e.g. 443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Port on Kharej to forward traffic to</small></div>
 </div>
 <div style="display:flex;justify-content:space-between;margin-top:32px">
 <button class="btn btn-outline" onclick="wizardNext(1)">← Back</button>
@@ -1715,15 +1801,15 @@ if(page===3)doCreateBoth();
 async function doCreateBoth(){
 const iranSrv=servers.find(s=>s.id===selectedIran); const kharejSrv=servers.find(s=>s.id===selectedKharej);
 if(!iranSrv||!kharejSrv){showToast("Select both servers first","error");wizardNext(1);return}
-const portsRaw=document.getElementById("wiz-ports").value.trim();
-let portsArr=[];
-if(portsRaw){portsArr=portsRaw.split(",").map(p=>p.trim()).filter(Boolean).map(p=>{if(/^[0-9]+$/.test(p))return p+"=127.0.0.1:"+p;return p});}
+const iranFwd=document.getElementById("wiz-iran-port").value.trim()||"443";
+const kharejTgt=document.getElementById("wiz-kharej-port").value.trim()||"443";
+const portMapping='"'+iranFwd+'=127.0.0.1:'+kharejTgt+'"';
 const params={
 iran_server:iranSrv,kharej_server:kharejSrv,
 transport:document.getElementById("wiz-transport").value,
 port:document.getElementById("wiz-port").value,
 token:document.getElementById("wiz-token").value,
-ports:portsArr.map(p=>'"'+p+'"').join(",")
+ports:portMapping
 };
 const r=await api("/api/tunnel/create-both",params);
 const ds=document.getElementById("deploy-status"); const dr=document.getElementById("deploy-result");
