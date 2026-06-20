@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.10.0 (paired tunnel UI + random unique port + dup guard)
+Version: 2.11.0 (centered paired UI + inline preset switch)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -584,6 +584,7 @@ def _get_tunnels_from_server_uncached(srv):
             uptime_s = up_out.strip() if up_out else "—"
 
             transport, bind_addr = "?", "?"
+            preset = ""
             config_name = svc.replace("backhaul-", "").replace(".service", "")
             config_path = f"{INSTALL_DIR}/{config_name}.toml"
 
@@ -591,6 +592,8 @@ def _get_tunnels_from_server_uncached(srv):
                 try:
                     with open(config_path) as f:
                         for line in f:
+                            if line.startswith("# bhm_preset"):
+                                preset = line.split("=", 1)[1].strip()
                             if 'transport' in line and '=' in line:
                                 transport = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
                             if 'bind_addr' in line or 'remote_addr' in line:
@@ -622,7 +625,8 @@ def _get_tunnels_from_server_uncached(srv):
                 "transport": transport,
                 "bind_addr": bind_addr,
                 "cron_active": cron_active,
-                "cron_interval": cron_interval
+                "cron_interval": cron_interval,
+                "preset": preset
             })
 
         return tunnels
@@ -642,19 +646,20 @@ for svc in $SVCS; do
   fi
   CFG_NAME=$(echo "$svc" | sed "s/^backhaul-//;s/\\.service$//")
   CFG_PATH="{INSTALL_DIR}/$CFG_NAME.toml"
-  TRANSPORT="?"; BIND="?"
+  TRANSPORT="?"; BIND="?"; PRESET=""
   if [ -f "$CFG_PATH" ]; then
     TRANSPORT=$(grep "transport" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
     [ -z "$TRANSPORT" ] && TRANSPORT="?"
     BIND=$(grep -E "bind_addr|remote_addr" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
     [ -z "$BIND" ] && BIND="?"
+    PRESET=$(grep "^# bhm_preset" "$CFG_PATH" 2>/dev/null | head -1 | cut -d= -f2 | tr -d " ")
   fi
   CRON_INT=""
   CRON_CONF="{CRON_CONFIG_DIR}/$svc.conf"
   if [ -f "$CRON_CONF" ]; then
     CRON_INT=$(grep "^INTERVAL=" "$CRON_CONF" 2>/dev/null | cut -d= -f2)
   fi
-  echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT"
+  echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT|$PRESET"
 done
 '"""
 
@@ -666,11 +671,11 @@ done
         line = line.strip()
         if not line.startswith("SVC_DATA:"):
             continue
-        parts = line[9:].split("|", 7)
-        if len(parts) < 8:
-            parts.extend([""] * (8 - len(parts)))
+        parts = line[9:].split("|", 8)
+        if len(parts) < 9:
+            parts.extend([""] * (9 - len(parts)))
 
-        svc, status_raw, cpu_raw, mem_raw, uptime_raw, transport, bind_addr, cron_int = parts
+        svc, status_raw, cpu_raw, mem_raw, uptime_raw, transport, bind_addr, cron_int, preset = parts
 
         cpu = cpu_raw.strip() if cpu_raw.strip() else "—"
         try:
@@ -696,7 +701,8 @@ done
             "transport": transport,
             "bind_addr": bind_addr,
             "cron_active": cron_active,
-            "cron_interval": cron_interval
+            "cron_interval": cron_interval,
+            "preset": preset.strip()
         })
 
     return tunnels
@@ -858,7 +864,9 @@ def create_tunnel_on_server(srv, params):
         if transport in ("tcp", "tcpmux"):
             config_lines.extend([f'mss = {_val("mss")}', f'so_rcvbuf = {_val("so_rcvbuf")}', f'so_sndbuf = {_val("so_sndbuf")}'])
 
-    config_content = "\n".join(config_lines) + "\n"
+    # Persist the chosen preset as a TOML comment so the dashboard can show it
+    # and offer one-click switching later. Backhaul ignores '#' comment lines.
+    config_content = f"# bhm_preset = {preset_name}\n" + "\n".join(config_lines) + "\n"
 
     descriptions = {"tcp": "Backhaul TCP Tunnel", "tcpmux": "Backhaul TCPMUX Tunnel", "wsmux": "Backhaul WSMUX Tunnel", "wssmux": "Backhaul WSSMUX Tunnel (TLS)"}
     service_content = f"""[Unit]
@@ -1606,6 +1614,59 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"success": True})
             return
 
+        if path == "/api/tunnel/set-preset":
+            # Re-apply a performance preset to BOTH ends of a tunnel and restart
+            # them. Transport / port / token / port-forwarding are preserved by
+            # reading them back from each end's existing config.
+            preset = data.get("preset", "balanced")
+            ends = data.get("ends", [])
+            if preset not in PRESETS:
+                self.send_json({"error": f"Invalid preset: {preset}"}, 400)
+                return
+            if not isinstance(ends, list) or not ends:
+                self.send_json({"error": "no tunnel ends provided"}, 400)
+                return
+            data_servers = load_servers()
+            results = []
+            for end in ends:
+                svc = end.get("service", "")
+                sid = end.get("server_id", "")
+                if not is_safe_svc(svc):
+                    results.append({"service": svc, "success": False, "error": "invalid service name"})
+                    continue
+                srv = next((s for s in data_servers.get("servers", []) if s.get("id") == sid), None)
+                if not srv:
+                    results.append({"service": svc, "success": False, "error": "server not found"})
+                    continue
+                name = svc.replace("backhaul-", "").replace(".service", "")
+                mm = _re.match(r"^(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-(\d+)$", name)
+                if not mm:
+                    results.append({"service": svc, "success": False, "error": "cannot parse service"})
+                    continue
+                role, transport, port = mm.group(1), mm.group(2), mm.group(3)
+                cfg_path = f"{INSTALL_DIR}/{role}-{transport}-{port}.toml"
+                cfg_text, _ = remote_exec(srv, f"cat {cfg_path} 2>/dev/null")
+                cfg_text = cfg_text or ""
+                tok_m = _re.search(r'token\s*=\s*"([^"]*)"', cfg_text)
+                params = {"role": role, "transport": transport, "port": port,
+                          "token": tok_m.group(1) if tok_m else "", "preset": preset}
+                if role == "kharej":
+                    ra = _re.search(r'remote_addr\s*=\s*"([^"]+):\d+"', cfg_text)
+                    if ra:
+                        params["iran_ip"] = ra.group(1)
+                else:
+                    pm = _re.search(r'ports\s*=\s*\[(.*?)\]', cfg_text, _re.S)
+                    if pm:
+                        params["ports"] = pm.group(1).strip()
+                res = create_tunnel_on_server(srv, params)
+                results.append({"service": svc, "success": res.get("success", False),
+                                "error": res.get("error")})
+                invalidate_cache(sid)
+            invalidate_cache()
+            ok = bool(results) and all(r.get("success") for r in results)
+            self.send_json({"success": ok, "results": results, "preset": preset})
+            return
+
         if path == "/api/tunnel/save_config":
             svc = data.get("service", "")
             config = data.get("config", "")
@@ -1977,27 +2038,47 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .tun-info{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut);margin-bottom:16px}
 .tun-info div{display:flex;align-items:center;gap:5px;background:var(--bg2);padding:5px 9px;border-radius:8px;border:1px solid var(--brd2)}
 /* ---- Paired tunnel layout: Kharej (left) -> Iran (right) ---- */
-.tunnel-pair{display:grid;grid-template-columns:1fr 160px 1fr;align-items:stretch;gap:0;margin-bottom:22px}
-.tun-end{border-left:4px solid var(--acc2);display:flex;flex-direction:column;gap:12px;height:100%}
+#tunnelsGrid{display:flex;flex-direction:column;align-items:center;gap:8px}
+.tunnel-pair{display:grid;grid-template-columns:1fr 190px 1fr;align-items:stretch;gap:0;width:100%;max-width:960px;margin:0 auto 14px}
+.tun-end{border-left:4px solid var(--acc2);display:flex;flex-direction:column;gap:13px;height:100%;transition:transform .15s,box-shadow .15s}
+.tun-end:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
 .tun-end.running{border-left-color:var(--succ)}
 .tun-end.stopped{border-left-color:var(--err)}
-.tun-end.empty-end{border-left-color:var(--brd);align-items:center;justify-content:center;color:var(--mut);font-size:12px;text-align:center;min-height:130px}
-.tun-role{font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:6px;text-transform:uppercase;margin-right:6px}
+.tun-end.empty-end{border-left-color:var(--brd);align-items:center;justify-content:center;color:var(--mut);font-size:12px;text-align:center;min-height:140px}
+.tun-role{font-size:10px;font-weight:800;letter-spacing:.6px;padding:3px 8px;border-radius:6px;text-transform:uppercase;margin-right:7px}
 .role-iran{background:color-mix(in srgb,var(--succ) 16%,transparent);color:var(--succ)}
 .role-kharej{background:color-mix(in srgb,var(--acc2) 18%,transparent);color:var(--acc2)}
-.tp-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:0 8px}
-.tp-meta{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:var(--text);background:var(--bg2);border:1px solid var(--brd2);padding:5px 10px;border-radius:8px;text-align:center;white-space:nowrap}
-.tp-arrow{position:relative;width:100%;min-width:40px;height:3px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:3px}
-.tp-arrow::after{content:'';position:absolute;right:-1px;top:50%;transform:translateY(-50%);border-left:9px solid var(--acc);border-top:6px solid transparent;border-bottom:6px solid transparent}
-.tp-arrow.dead{background:var(--err);opacity:.55}
-.tp-arrow.dead::after{border-left-color:var(--err)}
+.tp-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:0 14px}
+.tp-preset{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;font-weight:800;color:#04121a;background:linear-gradient(135deg,var(--acc),var(--acc2));border:none;padding:6px 11px;border-radius:999px;box-shadow:0 8px 20px -8px var(--acc2);transition:transform .12s,filter .12s;white-space:nowrap}
+.tp-preset:hover{transform:translateY(-1px);filter:brightness(1.08)}
+.tp-preset.custom{background:var(--bg2);color:var(--text);border:1px dashed var(--brd)}
+.tp-preset svg{opacity:.85}
+.tp-pill{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:var(--text);background:var(--bg2);border:1px solid var(--brd2);padding:5px 11px;border-radius:8px;text-align:center;white-space:nowrap;line-height:1.45}
+.tp-flow{position:relative;width:100%;min-width:54px;height:22px;display:flex;align-items:center}
+.tp-flow .line{position:relative;flex:1;height:3px;border-radius:3px;background:linear-gradient(90deg,var(--acc2),var(--acc));overflow:hidden}
+.tp-flow .line::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.9),transparent);width:40%;animation:tpflow 1.6s linear infinite}
+@keyframes tpflow{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+.tp-flow .head{width:0;height:0;border-left:9px solid var(--acc);border-top:6px solid transparent;border-bottom:6px solid transparent;margin-left:-1px}
+.tp-flow.dead .line{background:var(--err);opacity:.5}
+.tp-flow.dead .line::before{display:none}
+.tp-flow.dead .head{border-left-color:var(--err);opacity:.6}
 .tp-cron{font-size:10px;color:var(--acc);display:flex;align-items:center;gap:4px;font-weight:700}
+.ps-opt{display:flex;gap:11px;align-items:flex-start;padding:13px;border:1px solid var(--brd);border-radius:13px;cursor:pointer;margin-bottom:10px;transition:.15s}
+.ps-opt:hover{border-color:var(--acc)}
+.ps-opt.sel{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,transparent)}
+.ps-opt:has(input:checked){border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,transparent)}
+.ps-opt input{margin-top:4px;accent-color:var(--acc)}
+.ps-t{font-weight:800;font-size:13px;margin-bottom:3px}
+.ps-d{font-size:11px;color:var(--mut);line-height:1.5;margin-bottom:9px}
 @media(max-width:840px){
-  .tunnel-pair{grid-template-columns:1fr}
-  .tp-link{flex-direction:row;flex-wrap:wrap;padding:12px 0}
-  .tp-arrow{width:3px;height:34px;background:linear-gradient(180deg,var(--acc2),var(--acc))}
-  .tp-arrow::after{right:50%;top:auto;bottom:-1px;transform:translateX(50%);border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--acc);border-bottom:none}
-  .tp-arrow.dead::after{border-top-color:var(--err)}
+  .tunnel-pair{grid-template-columns:1fr;max-width:480px}
+  .tp-link{flex-direction:row;flex-wrap:wrap;justify-content:center;padding:14px 0}
+  .tp-flow{width:auto;min-width:0;height:40px;flex-direction:column}
+  .tp-flow .line{width:3px;height:100%;flex:1}
+  .tp-flow .line::before{width:100%;height:40%;background:linear-gradient(180deg,transparent,rgba(255,255,255,.9),transparent);animation:tpflowv 1.6s linear infinite}
+  @keyframes tpflowv{0%{transform:translateY(-120%)}100%{transform:translateY(320%)}}
+  .tp-flow .head{border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--acc);border-bottom:none;margin:-1px 0 0}
+  .tp-flow.dead .head{border-top-color:var(--err)}
 }
 
 .modal{position:fixed;inset:0;background:rgba(2,6,15,.65);backdrop-filter:blur(6px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;pointer-events:none;transition:.2s}
@@ -2252,6 +2333,22 @@ textarea.code:focus{border-color:var(--acc)}
   </div>
 </div>
 
+<!-- Change Preset Modal -->
+<div class="modal" id="m-preset">
+  <div class="m-box" style="max-width:520px">
+    <div class="m-head"><h3>Change Performance Preset</h3><button class="m-close" onclick="closeModal('m-preset')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="m-body">
+      <div id="preset-switch-cur" style="font-size:13px;margin-bottom:14px"></div>
+      <div id="preset-switch-list"></div>
+      <p style="color:var(--mut);font-size:12px;line-height:1.6;margin-top:4px">Applies the new tuning values to <b>both ends</b> (Iran + Kharej) and restarts them. Transport, port and token stay the same. The tunnel disconnects for ~1 second.</p>
+    </div>
+    <div class="m-foot">
+      <button class="btn" onclick="closeModal('m-preset')">Cancel</button>
+      <button class="btn btn-primary" id="preset-apply-btn" onclick="applyPreset()">Apply &amp; Restart</button>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal" id="m-settings">
   <div class="m-box">
@@ -2407,8 +2504,9 @@ async function fetchTunnels(force){
       return `<div class="tunnel-pair">
         ${endCard(p.kharej,'kharej')}
         <div class="tp-link">
-          <div class="tp-meta">${esc((p.transport||'').toUpperCase())}<br>:${esc(p.port)}</div>
-          <div class="tp-arrow ${alive?'':'dead'}"></div>
+          ${presetChip(p)}
+          <div class="tp-pill">${esc((p.transport||'').toUpperCase())}<br>:${esc(p.port)}</div>
+          <div class="tp-flow ${alive?'':'dead'}"><div class="line"></div><div class="head"></div></div>
           ${cron?`<div class="tp-cron"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> ${esc(cronInt)}m</div>`:''}
           <button class="btn btn-danger btn-icon" title="Delete tunnel (both ends)" onclick="delPair('${esc(p.key)}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
@@ -2449,6 +2547,44 @@ async function delPair(key){
     await Promise.all(tasks);
     showToast('Tunnel deleted (both ends)');fetchTunnels();
   }catch(e){showToast(e.message,true)}
+}
+function presetChip(p){
+  const key=(p.iran&&p.iran.preset)||(p.kharej&&p.kharej.preset)||'';
+  const known=window.PRESETS&&window.PRESETS[key];
+  const lbl=known?known.label:(key==='custom'?'Custom':(key||'Custom'));
+  const short=(lbl.split('\u2014')[0]||lbl).trim();
+  const cls=(known&&key!=='custom')?'':'custom';
+  return `<button class="tp-preset ${cls}" title="Change performance preset" onclick="openPresetSwitch('${esc(p.key)}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>${esc(short)} <span style="opacity:.7">\u25be</span></button>`;
+}
+var presetSwitchKey='';
+function openPresetSwitch(key){
+  const p=(window.TUNNEL_PAIRS||[]).find(x=>x.key===key); if(!p)return;
+  presetSwitchKey=key;
+  const cur=(p.iran&&p.iran.preset)||(p.kharej&&p.kharej.preset)||'';
+  const list=$('preset-switch-list');
+  list.innerHTML=['balanced','gaming','throughput','stable'].map(k=>{
+    const pr=window.PRESETS[k]; if(!pr)return '';
+    return `<label class="ps-opt${k===cur?' sel':''}"><input type="radio" name="psw" value="${k}" ${k===cur?'checked':''}>
+      <div style="flex:1"><div class="ps-t">${esc(pr.label)}</div><div class="ps-d">${esc(pr.desc)}</div>
+      <div class="bars">${rankBar('Speed',pr.rank_speed)}${rankBar('Stability',pr.rank_stability)}${rankBar('Low latency',pr.rank_latency)}</div></div></label>`;
+  }).join('');
+  $('preset-switch-cur').innerHTML='Current: <b>'+(window.PRESETS[cur]?esc(window.PRESETS[cur].label):(cur?esc(cur):'Custom / manual'))+'</b> \u00b7 transport <b>'+esc((p.transport||'').toUpperCase())+'</b> \u00b7 port <b>:'+esc(p.port)+'</b>';
+  openModal('m-preset');
+}
+async function applyPreset(){
+  const sel=document.querySelector('input[name=psw]:checked'); if(!sel){showToast('Pick a preset',true);return;}
+  const p=(window.TUNNEL_PAIRS||[]).find(x=>x.key===presetSwitchKey); if(!p)return;
+  const ends=[];
+  if(p.iran)ends.push({service:p.iran.service,server_id:p.iran.server_id});
+  if(p.kharej)ends.push({service:p.kharej.service,server_id:p.kharej.server_id});
+  const btn=$('preset-apply-btn');btn.disabled=true;btn.textContent='Applying\u2026';
+  try{
+    const r=await api('/api/tunnel/set-preset',{preset:sel.value,ends:ends});
+    closeModal('m-preset');
+    showToast((r&&r.success)?'Preset applied & tunnel restarted':'Applied with some errors \u2014 check logs');
+    setTimeout(fetchTunnels,800);
+  }catch(e){showToast(e.message,true)}
+  finally{btn.disabled=false;btn.textContent='Apply & Restart';}
 }
 async function tunAction(svc,sid,act){
   try{await api('/api/tunnel/action',{service:svc,server_id:sid,action:act});showToast('Tunnel '+act+'ed');fetchTunnels();}

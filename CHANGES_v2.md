@@ -1,6 +1,20 @@
 # BackhaulManager — Security Hardening & Performance Presets
 
-Panel `v2.10.0` · Script `v1.6.2`
+Panel `v2.11.0` · Script `v1.6.2`
+
+## ✨ Centered paired UI + inline preset switch (v2.11.0)
+- **Centered layout & polish** — tunnel rows are now centred on the page
+  (max-width, auto margins) instead of hugging the left edge. The connector was
+  redesigned: an **animated flowing arrow** (Kharej → Iran) that turns red/static
+  when an end is down, a clean transport/port pill, and hover lift on the cards.
+- **Applied preset is shown** — the preset chosen at creation is stored as a
+  `# bhm_preset` marker in the tunnel config and displayed as a chip above the
+  arrow. Manually-edited tunnels show **Custom**.
+- **One-click preset switch** — click the preset chip to open a picker (with the
+  Speed/Stability/Latency bars), choose a new preset and **Apply & Restart**.
+  The new `/api/tunnel/set-preset` endpoint rebuilds **both ends** (preserving
+  transport, port, token and port-forwarding from the existing config) and
+  restarts them.
 
 ## ✨ Paired tunnel dashboard + unique ports (v2.10.0)
 - **Paired graphical layout** — the two ends of a tunnel (Kharej + Iran) are no
