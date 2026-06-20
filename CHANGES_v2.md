@@ -1,6 +1,25 @@
 # BackhaulManager — Security Hardening & Performance Presets
 
-Panel `v2.9.4` · Script `v1.6.2`
+Panel `v2.10.0` · Script `v1.6.2`
+
+## ✨ Paired tunnel dashboard + unique ports (v2.10.0)
+- **Paired graphical layout** — the two ends of a tunnel (Kharej + Iran) are no
+  longer shown as two unrelated cards. They are now grouped by transport+port
+  into a single row: **Kharej on the left → arrow (with transport/port and any
+  auto-restart interval) → Iran on the right**. Each new tunnel stacks below the
+  previous one (Kharej under Kharej, Iran under Iran). The arrow turns red when
+  an end is down. Layout collapses to a vertical stack on small screens.
+- **"Delete tunnel" removes BOTH ends** — deleting a tunnel now tears down the
+  matching Iran *and* Kharej services together, so you never leave one orphaned
+  end running and "disconnected". Deleting one tunnel never touches another
+  tunnel on a different port (delete was already isolated per service).
+- **Random, unique tunnel port** — the New Tunnel form no longer defaults to a
+  fixed `9743`. It picks a random free port (20000-60000) that isn't already in
+  use, with a re-roll button. The dashboard stat cards now count *tunnels*
+  (pairs), not individual ends.
+- **Duplicate-port guard (server-side)** — `create-both` now rejects a port that
+  already exists on either the Iran or Kharej server (HTTP 409) instead of
+  silently overwriting an existing tunnel.
 
 ## 🐞 Throughput preset framesize fix (v2.9.4 / script v1.6.2)
 - The **Throughput** preset set `mux_framesize = 65536`, but SMUX rejects any

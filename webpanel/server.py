@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.9.4 (cron fix + preset/transport decoupling + framesize cap)
+Version: 2.10.0 (paired tunnel UI + random unique port + dup guard)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1500,6 +1500,33 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(custom, dict):
                 custom = {}
 
+            # Validate transport/port up front so we can safely build paths and
+            # reject duplicates before touching either server.
+            if transport not in ["tcp", "tcpmux", "wsmux", "wssmux"]:
+                self.send_json({"error": f"Invalid transport: {transport}"}, 400)
+                return
+            try:
+                port_int = int(port)
+                if not (1 <= port_int <= 65535):
+                    raise ValueError
+                port = str(port_int)
+            except (TypeError, ValueError):
+                self.send_json({"error": f"Invalid port: {port}"}, 400)
+                return
+
+            # Reject a port already used by an existing tunnel on EITHER side, so
+            # creating a new tunnel can never silently overwrite/break another one.
+            for chk_srv, chk_role in ((iran_srv, "iran"), (kharej_srv, "kharej")):
+                cfg_path = f"{INSTALL_DIR}/{chk_role}-{transport}-{port}.toml"
+                ex_out, _ = remote_exec(chk_srv, f"test -f {cfg_path} && echo BHM_EXISTS || true")
+                if "BHM_EXISTS" in (ex_out or ""):
+                    self.send_json({
+                        "error": f"Port {port} ({transport.upper()}) is already in use on the "
+                                 f"{chk_role} server \"{chk_srv.get('name', chk_role)}\". "
+                                 f"Pick a different (unique) tunnel port."
+                    }, 409)
+                    return
+
             if not token:
                 tok_out, _ = run_cmd("cat /proc/sys/kernel/random/uuid 2>/dev/null")
                 token = tok_out[:36] if tok_out else secrets.token_hex(16)
@@ -1949,6 +1976,29 @@ nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-co
 .stopped .tun-status{color:var(--err)}
 .tun-info{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut);margin-bottom:16px}
 .tun-info div{display:flex;align-items:center;gap:5px;background:var(--bg2);padding:5px 9px;border-radius:8px;border:1px solid var(--brd2)}
+/* ---- Paired tunnel layout: Kharej (left) -> Iran (right) ---- */
+.tunnel-pair{display:grid;grid-template-columns:1fr 160px 1fr;align-items:stretch;gap:0;margin-bottom:22px}
+.tun-end{border-left:4px solid var(--acc2);display:flex;flex-direction:column;gap:12px;height:100%}
+.tun-end.running{border-left-color:var(--succ)}
+.tun-end.stopped{border-left-color:var(--err)}
+.tun-end.empty-end{border-left-color:var(--brd);align-items:center;justify-content:center;color:var(--mut);font-size:12px;text-align:center;min-height:130px}
+.tun-role{font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:6px;text-transform:uppercase;margin-right:6px}
+.role-iran{background:color-mix(in srgb,var(--succ) 16%,transparent);color:var(--succ)}
+.role-kharej{background:color-mix(in srgb,var(--acc2) 18%,transparent);color:var(--acc2)}
+.tp-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:0 8px}
+.tp-meta{font-family:ui-monospace,monospace;font-size:11px;font-weight:700;color:var(--text);background:var(--bg2);border:1px solid var(--brd2);padding:5px 10px;border-radius:8px;text-align:center;white-space:nowrap}
+.tp-arrow{position:relative;width:100%;min-width:40px;height:3px;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:3px}
+.tp-arrow::after{content:'';position:absolute;right:-1px;top:50%;transform:translateY(-50%);border-left:9px solid var(--acc);border-top:6px solid transparent;border-bottom:6px solid transparent}
+.tp-arrow.dead{background:var(--err);opacity:.55}
+.tp-arrow.dead::after{border-left-color:var(--err)}
+.tp-cron{font-size:10px;color:var(--acc);display:flex;align-items:center;gap:4px;font-weight:700}
+@media(max-width:840px){
+  .tunnel-pair{grid-template-columns:1fr}
+  .tp-link{flex-direction:row;flex-wrap:wrap;padding:12px 0}
+  .tp-arrow{width:3px;height:34px;background:linear-gradient(180deg,var(--acc2),var(--acc))}
+  .tp-arrow::after{right:50%;top:auto;bottom:-1px;transform:translateX(50%);border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--acc);border-bottom:none}
+  .tp-arrow.dead::after{border-top-color:var(--err)}
+}
 
 .modal{position:fixed;inset:0;background:rgba(2,6,15,.65);backdrop-filter:blur(6px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;pointer-events:none;transition:.2s}
 .modal.show{opacity:1;pointer-events:auto}
@@ -2079,7 +2129,12 @@ textarea.code:focus{border-color:var(--acc)}
         </div>
         <div class="row2">
           <div class="field"><label>Transport</label><select id="cb-trans" onchange="onTransportChange()"><option value="wssmux">WSSMUX (recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
-          <div class="field"><label>Tunnel Port</label><input id="cb-port" type="number" value="9743" required></div>
+          <div class="field"><label>Tunnel Port <span style="color:var(--mut);font-weight:500">(random &amp; unique)</span></label>
+            <div class="input-group">
+              <input id="cb-port" type="number" min="1" max="65535" value="9743" required>
+              <button type="button" class="btn btn-icon" title="Random free port" onclick="randomizeTunnelPort()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>
+            </div>
+          </div>
         </div>
         <div class="field">
           <label>Performance Preset</label>
@@ -2253,7 +2308,7 @@ function switchTab(id,el){
   $('tab-'+id).style.display='block';
   if(id==='servers')fetchServers();
   if(id==='tunnels')fetchTunnels();
-  if(id==='create')populateServerSelects();
+  if(id==='create'){populateServerSelects();randomizeTunnelPort();}
 }
 
 /* ---------- Servers ---------- */
@@ -2323,35 +2378,76 @@ async function fetchTunnels(force){
   try{
     const d=await api('/api/tunnels'); if(!d)return;
     const tuns=d.tunnels||[];
-    $('st-tun').textContent=tuns.length;
-    $('st-run').textContent=tuns.filter(t=>t.status==='running').length;
+    // Group the two ends (iran + kharej) of a tunnel into one pair, keyed by
+    // transport+port, so the dashboard shows one tunnel = one row.
+    const groups={};
+    tuns.forEach(t=>{
+      const name=t.service.replace('backhaul-','').replace('.service','');
+      const m=name.match(/^(iran|kharej)-(.+)-([0-9]+)$/);
+      t.role=m?m[1]:'?'; t.tp=m?m[2]:(t.transport||'?'); t.port=m?m[3]:'?';
+      const key=t.tp+':'+t.port;
+      groups[key]=groups[key]||{key:key,transport:t.tp,port:t.port,iran:null,kharej:null};
+      if(t.role==='kharej')groups[key].kharej=t; else groups[key].iran=t;
+    });
+    const pairs=Object.values(groups);
+    window.TUNNEL_PAIRS=pairs;
+    window.TUNNEL_PORTS=tuns.map(t=>t.port).filter(Boolean);
+    $('st-tun').textContent=pairs.length;
+    $('st-run').textContent=pairs.filter(p=>{
+      const ends=[p.iran,p.kharej].filter(Boolean);
+      return ends.length && ends.every(e=>e.status==='running');
+    }).length;
     const g=$('tunnelsGrid');
-    if(!tuns.length){g.innerHTML='<div class="empty">No active tunnels. Use “New Tunnel” to create one.</div>';return;}
-    g.innerHTML=tuns.map(t=>{
-      const cls=t.status==='running'?'running':'stopped';
-      const short=t.service.replace('backhaul-','').replace('.service','');
-      const cron=t.cron_active?`<div title="Auto-restart"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(t.cron_interval)}m</div>`:'';
-      return `<div class="card tun-card ${cls}">
-        <div class="tun-head">
-          <div class="tun-title">${esc(t.server_name)} <span style="color:var(--mut)">›</span> ${esc(short)}</div>
-          <div class="tun-status"><div class="dot"></div>${t.status.toUpperCase()}</div>
+    if(!pairs.length){g.innerHTML='<div class="empty">No active tunnels. Use \u201cNew Tunnel\u201d to create one.</div>';return;}
+    g.innerHTML=pairs.map(p=>{
+      const cron=(p.iran&&p.iran.cron_active)||(p.kharej&&p.kharej.cron_active);
+      const cronInt=(p.iran&&p.iran.cron_interval)||(p.kharej&&p.kharej.cron_interval)||'';
+      const ends=[p.iran,p.kharej].filter(Boolean);
+      const alive=ends.length&&ends.every(e=>e.status==='running');
+      return `<div class="tunnel-pair">
+        ${endCard(p.kharej,'kharej')}
+        <div class="tp-link">
+          <div class="tp-meta">${esc((p.transport||'').toUpperCase())}<br>:${esc(p.port)}</div>
+          <div class="tp-arrow ${alive?'':'dead'}"></div>
+          ${cron?`<div class="tp-cron"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> ${esc(cronInt)}m</div>`:''}
+          <button class="btn btn-danger btn-icon" title="Delete tunnel (both ends)" onclick="delPair('${esc(p.key)}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
-        <div class="tun-info">
-          <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(t.uptime)}</div>
-          <div>CPU ${esc(t.cpu)}</div>
-          <div>RAM ${esc(t.memory)}</div>
-          <div>${esc((t.transport||'').toUpperCase())}</div>
-          ${cron}
-        </div>
-        <div class="srv-actions">
-          <button class="btn btn-icon" title="${t.status==='running'?'Restart':'Start'}" onclick="tunAction('${esc(t.service)}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
-          <button class="btn btn-icon" title="Stop" onclick="tunAction('${esc(t.service)}','${t.server_id}','stop')"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-          <button class="btn btn-icon" title="Logs" onclick="showLogs('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H3m18 8H8m13 8H3"/></svg></button>
-          <button class="btn btn-icon" title="Edit config" onclick="editConf('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
-          <button class="btn btn-icon${t.cron_active?' cron-on':''}" title="Auto-restart schedule" onclick="openCron('${esc(t.service)}','${t.server_id}',${t.cron_active?1:0},'${esc(t.cron_interval||'')}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
-          <button class="btn btn-danger btn-icon" title="Delete" onclick="delTun('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-        </div></div>`;
+        ${endCard(p.iran,'iran')}
+      </div>`;
     }).join('');
+  }catch(e){showToast(e.message,true)}
+}
+function endCard(t,role){
+  if(!t)return `<div class="card tun-end empty-end">No <b>${role}</b> end found for this tunnel</div>`;
+  const cls=t.status==='running'?'running':'stopped';
+  return `<div class="card tun-end ${cls}">
+    <div class="tun-head">
+      <div><span class="tun-role role-${role}">${role}</span><span class="tun-title">${esc(t.server_name)}</span></div>
+      <div class="tun-status"><div class="dot"></div>${t.status.toUpperCase()}</div>
+    </div>
+    <div class="tun-info">
+      <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(t.uptime)}</div>
+      <div>CPU ${esc(t.cpu)}</div>
+      <div>RAM ${esc(t.memory)}</div>
+    </div>
+    <div class="srv-actions">
+      <button class="btn btn-icon" title="${t.status==='running'?'Restart':'Start'}" onclick="tunAction('${esc(t.service)}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+      <button class="btn btn-icon" title="Stop" onclick="tunAction('${esc(t.service)}','${t.server_id}','stop')"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      <button class="btn btn-icon" title="Logs" onclick="showLogs('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H3m18 8H8m13 8H3"/></svg></button>
+      <button class="btn btn-icon" title="Edit config" onclick="editConf('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+      <button class="btn btn-icon${t.cron_active?' cron-on':''}" title="Auto-restart schedule" onclick="openCron('${esc(t.service)}','${t.server_id}',${t.cron_active?1:0},'${esc(t.cron_interval||'')}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+    </div>
+  </div>`;
+}
+async function delPair(key){
+  const p=(window.TUNNEL_PAIRS||[]).find(x=>x.key===key); if(!p)return;
+  if(!confirm('Delete this tunnel? This removes BOTH ends (Iran + Kharej) on port '+p.port+'. Other tunnels are not affected.'))return;
+  try{
+    const tasks=[];
+    if(p.kharej)tasks.push(api('/api/tunnel/delete',{service:p.kharej.service,server_id:p.kharej.server_id}));
+    if(p.iran)tasks.push(api('/api/tunnel/delete',{service:p.iran.service,server_id:p.iran.server_id}));
+    await Promise.all(tasks);
+    showToast('Tunnel deleted (both ends)');fetchTunnels();
   }catch(e){showToast(e.message,true)}
 }
 async function tunAction(svc,sid,act){
@@ -2359,7 +2455,7 @@ async function tunAction(svc,sid,act){
   catch(e){showToast(e.message,true)}
 }
 async function delTun(svc,sid){
-  if(!confirm('Permanently delete this tunnel?'))return;
+  if(!confirm('Permanently delete this tunnel end?'))return;
   try{await api('/api/tunnel/delete',{service:svc,server_id:sid});showToast('Tunnel deleted');fetchTunnels();}
   catch(e){showToast(e.message,true)}
 }
@@ -2431,6 +2527,21 @@ function buildPorts(){
 async function genToken(){
   try{const r=await api('/api/token/generate');if(r&&r.token)$('cb-token').value=r.token;}catch(e){}
 }
+async function randomizeTunnelPort(){
+  // Pick a random free port (20000-60000) that isn't already used by a tunnel,
+  // so the default is never the same fixed 9743 and never collides.
+  let used=window.TUNNEL_PORTS;
+  if(!used){
+    try{const d=await api('/api/tunnels');
+      used=(d.tunnels||[]).map(t=>{const m=t.service.match(/-([0-9]+)[.]service$/);return m?m[1]:'';});
+      window.TUNNEL_PORTS=used;
+    }catch(e){used=[];}
+  }
+  const set=new Set((used||[]).map(String));
+  let p,tries=0;
+  do{p=Math.floor(20000+Math.random()*40000);tries++;}while(set.has(String(p))&&tries<60);
+  $('cb-port').value=p;
+}
 async function createBothTunnel(e){
   e.preventDefault();
   const ports=buildPorts();
@@ -2443,7 +2554,7 @@ async function createBothTunnel(e){
       preset:$('cb-preset').value,custom:($('cb-preset').value==='custom'?collectCustom():{})
     });
     showToast('Tunnel created on both servers!');
-    $('createBothForm').reset();$('cb-port').value='9743';$('portRows').innerHTML='';addPortRow();
+    $('createBothForm').reset();$('portRows').innerHTML='';addPortRow();randomizeTunnelPort();
     switchTab('tunnels',document.querySelectorAll('.tab')[1]);
   }catch(ex){showToast(ex.message,true)}
   finally{btn.disabled=false;btn.textContent='Create & Connect Tunnel';}
