@@ -1289,1047 +1289,643 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
 def get_login_page():
     return """<!DOCTYPE html>
-
-<html class="dark" dir="rtl" lang="fa"><head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>TunnelPro | ورود به سامانه</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;300;400;500;700;900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            "colors": {
-                    "outline-variant": "#3d494c",
-                    "primary": "#4cd7f6",
-                    "surface-container-lowest": "#060e20",
-                    "inverse-on-surface": "#283044",
-                    "surface-variant": "#2d3449",
-                    "on-surface": "#dae2fd",
-                    "on-background": "#dae2fd",
-                    "on-primary-fixed": "#001f26",
-                    "surface-container-low": "#131b2e",
-                    "on-primary-fixed-variant": "#004e5c",
-                    "on-secondary-fixed-variant": "#2f2ebe",
-                    "tertiary-fixed": "#6ffbbe",
-                    "inverse-surface": "#dae2fd",
-                    "surface-dim": "#0b1326",
-                    "on-surface-variant": "#bcc9cd",
-                    "tertiary": "#4edea3",
-                    "secondary-fixed": "#e1e0ff",
-                    "outline": "#869397",
-                    "on-secondary-fixed": "#07006c",
-                    "secondary-fixed-dim": "#c0c1ff",
-                    "on-tertiary": "#003824",
-                    "on-tertiary-fixed": "#002113",
-                    "on-error": "#690005",
-                    "tertiary-container": "#1bbd85",
-                    "on-secondary-container": "#b0b2ff",
-                    "on-primary-container": "#00424f",
-                    "tertiary-fixed-dim": "#4edea3",
-                    "error": "#ffb4ab",
-                    "surface-bright": "#31394d",
-                    "surface-container-high": "#222a3d",
-                    "on-tertiary-container": "#00452e",
-                    "on-error-container": "#ffdad6",
-                    "on-secondary": "#1000a9",
-                    "inverse-primary": "#00687a",
-                    "error-container": "#93000a",
-                    "surface-tint": "#4cd7f6",
-                    "surface": "#0b1326",
-                    "secondary-container": "#3131c0",
-                    "secondary": "#c0c1ff",
-                    "on-tertiary-fixed-variant": "#005236",
-                    "primary-fixed-dim": "#4cd7f6",
-                    "surface-container-highest": "#2d3449",
-                    "on-primary": "#003640",
-                    "surface-container": "#171f33",
-                    "primary-fixed": "#acedff",
-                    "background": "#0b1326",
-                    "primary-container": "#06b6d4"
-            },
-            "fontFamily": {
-                    "body-lg": ["Vazirmatn"],
-                    "headline-md": ["Vazirmatn"],
-                    "headline-lg-mobile": ["Vazirmatn"],
-                    "label-technical": ["JetBrains Mono"],
-                    "body-md": ["Vazirmatn"],
-                    "label-sm": ["Vazirmatn"],
-                    "headline-lg": ["Vazirmatn"]
-            }
-          },
-        },
-      }
-    </script>
-<style>
-        body { background-color: #0b1326; font-family: 'Vazirmatn', sans-serif; overflow: hidden; }
-        .glass-card { backdrop-filter: blur(24px); background: rgba(15, 23, 42, 0.4); border: 0.5px solid rgba(255, 255, 255, 0.1); position: relative; }
-        .glass-card::before { content: ''; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent, rgba(76, 215, 246, 0.2)); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; pointer-events: none; }
-        .glow-sphere { position: absolute; border-radius: 50%; filter: blur(80px); z-index: 0; opacity: 0.4; }
-        .animate-float { animation: float 20s infinite alternate ease-in-out; }
-        @keyframes float { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(100px, 50px) scale(1.2); } }
-        .btn-glow:hover { box-shadow: 0 0 20px rgba(6, 182, 212, 0.5); }
-        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col items-center justify-center relative bg-surface">
-<div class="fixed inset-0 overflow-hidden pointer-events-none">
-<div class="glow-sphere animate-float w-[500px] h-[500px] bg-primary/20 -top-20 -right-20"></div>
-<div class="glow-sphere animate-float w-[600px] h-[600px] bg-secondary/10 bottom-0 -left-40" style="animation-delay: -5s;"></div>
-<div class="glow-sphere animate-float w-[400px] h-[400px] bg-tertiary/10 top-1/2 left-1/3" style="animation-delay: -12s;"></div>
-</div>
-<main class="z-10 w-full max-w-md px-4 md:px-0">
-<div class="flex flex-col items-center mb-8">
-<div class="w-16 h-16 mb-4 flex items-center justify-center bg-primary/10 rounded-xl border border-primary/30">
-<span class="material-symbols-outlined text-primary text-4xl" style="font-variation-settings: 'FILL' 1;">hub</span>
-</div>
-<h1 class="font-headline-lg text-3xl text-on-surface tracking-tight font-bold">TunnelPro</h1>
-<p class="font-body-md text-on-surface-variant mt-2">مدیریت هوشمند زیرساختهای تونلی</p>
-</div>
-<div class="glass-card rounded-xl p-8 shadow-2xl">
-<h2 class="font-headline-md text-2xl text-on-surface mb-8 text-center font-bold">ورود به پنل مدیریت</h2>
-<div id="error" class="hidden bg-error-container text-on-error-container text-sm rounded-lg p-3 mb-4 text-center font-medium border border-error/20"></div>
-<form class="space-y-6" onsubmit="doLogin(event)">
-<div class="space-y-2">
-<label class="block font-label-sm text-on-surface-variant pr-1">نام کاربری</label>
-<div class="relative group">
-<div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
-<span class="material-symbols-outlined text-outline group-focus-within:text-primary transition-colors">person</span>
-</div>
-<input id="username" required class="w-full bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg py-3 pr-12 pl-4 text-on-surface placeholder:text-outline-variant transition-all outline-none" placeholder="admin" type="text"/>
-</div>
-</div>
-<div class="space-y-2">
-<label class="block font-label-sm text-on-surface-variant pr-1">رمز عبور</label>
-<div class="relative group">
-<div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
-<span class="material-symbols-outlined text-outline group-focus-within:text-primary transition-colors">lock</span>
-</div>
-<input id="password" required class="w-full bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg py-3 pr-12 pl-4 text-on-surface placeholder:text-outline-variant transition-all outline-none" placeholder="••••••••" type="password"/>
-</div>
-</div>
-<div class="flex items-center justify-between">
-<label class="flex items-center cursor-pointer group">
-<input class="w-4 h-4 rounded border-outline-variant bg-surface-container-low text-primary focus:ring-primary focus:ring-offset-surface" type="checkbox"/>
-<span class="mr-2 font-label-sm text-on-surface-variant group-hover:text-on-surface transition-colors">مرا به خاطر بسپار</span>
-</label>
-</div>
-<button id="btn-login" class="w-full py-4 bg-primary-container text-on-primary-container font-bold text-lg rounded-lg btn-glow transition-all active:scale-95 flex items-center justify-center gap-2 group" type="submit">
-<span>ورود به سامانه</span>
-<span class="material-symbols-outlined transform group-hover:-translate-x-1 transition-transform">arrow_back</span>
-</button>
-</form>
-<div class="mt-8 pt-6 border-t border-outline-variant/30 flex justify-center gap-6">
-<div class="flex items-center gap-2 text-on-surface-variant opacity-60">
-<span class="material-symbols-outlined text-sm">security</span>
-<span class="font-label-sm">اتصال امن SSL</span>
-</div>
-<div class="flex items-center gap-2 text-on-surface-variant opacity-60">
-<span class="material-symbols-outlined text-sm">language</span>
-<span class="font-label-sm">فارسی (IR)</span>
-</div>
-</div>
-</div>
-</main>
-
-<div class="fixed inset-0 pointer-events-none opacity-[0.03] overflow-hidden">
-<div class="w-full h-full bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
-</div>
-<script>
-async function doLogin(e){e.preventDefault();const u=document.getElementById("username").value;const p=document.getElementById("password").value;const btn=document.getElementById("btn-login");const btnText=btn.querySelector("span");btnText.textContent="در حال ورود...";btn.style.opacity="0.8";const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.success){window.location.href="/"}else{const er=document.getElementById("error");er.textContent=d.error||"نام کاربری یا رمز عبور اشتباه است";er.classList.remove("hidden");btnText.textContent="ورود به سامانه";btn.style.opacity="1";}}
-const inputs = document.querySelectorAll('input');
-inputs.forEach(input => {
-    input.addEventListener('focus', () => {
-        if(input.type==='checkbox') return;
-        input.parentElement.parentElement.classList.add('scale-[1.02]');
-        input.parentElement.parentElement.style.transition = 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
-    });
-    input.addEventListener('blur', () => {
-        if(input.type==='checkbox') return;
-        input.parentElement.parentElement.classList.remove('scale-[1.02]');
-    });
-});
-</script>
-</body></html>"""
-
-
-def get_main_page():
-    return """<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BackhaulManager - Premium Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;800&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>Backhaul Panel — Sign in</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }
-:root {
-  --bg: #050505;
-  --bg-card: rgba(20, 20, 20, 0.6);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #f4f4f5; --text-muted: #a1a1aa; --text-dark: #52525b;
-  --primary: #06b6d4; --primary-hover: #0891b2;
-  --secondary: #8b5cf6;
-  --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+:root{
+  --accent:#22d3ee; --accent2:#6366f1; --accent3:#2dd4bf;
+  --bg:#070b16; --bg2:#0b1224;
+  --text:#e8edf7; --muted:#93a0bd;
+  --glass:rgba(20,28,48,.55); --glass-brd:rgba(255,255,255,.10);
+  --field:rgba(255,255,255,.05); --field-brd:rgba(255,255,255,.12);
+  --danger:#fb7185; --shadow:0 30px 80px -20px rgba(0,0,0,.65);
 }
-body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
-/* Glassmorphism Background Glows */
-.bg-glow-1 { position: fixed; top: -10%; left: -10%; width: 500px; height: 500px; background: radial-gradient(circle, rgba(6,182,212,0.1) 0%, transparent 70%); z-index: -1; }
-.bg-glow-2 { position: fixed; bottom: -10%; right: -10%; width: 600px; height: 600px; background: radial-gradient(circle, rgba(139,92,246,0.1) 0%, transparent 70%); z-index: -1; }
-
-.topbar { background: rgba(10, 10, 10, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 30px rgba(0,0,0,0.5); }
-.topbar-left { display: flex; align-items: center; gap: 16px; }
-.topbar-logo { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #fff, #a1a1aa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.5px; }
-.topbar-badge { background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.2); border-radius: 20px; padding: 4px 12px; font-size: 11px; color: var(--primary); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
-.topbar-right { display: flex; align-items: center; gap: 20px; }
-.btn-logout { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); border-radius: 10px; padding: 8px 16px; color: var(--danger); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
-.btn-logout:hover { background: rgba(239,68,68,0.2); box-shadow: 0 0 15px rgba(239,68,68,0.2); }
-
-.container { max-width: 1400px; margin: 0 auto; padding: 32px; }
-
-/* Tabs */
-.tabs { display: flex; gap: 8px; padding: 6px; background: rgba(15,15,15,0.6); backdrop-filter: blur(10px); border-radius: 16px; margin-bottom: 32px; border: 1px solid var(--border); width: fit-content; margin-left: auto; margin-right: auto; }
-.tab { padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-muted); transition: all 0.3s; border: none; background: transparent; display: flex; align-items: center; gap: 8px; }
-.tab:hover { color: #fff; background: rgba(255,255,255,0.05); }
-.tab.active { background: linear-gradient(135deg, var(--primary), #3b82f6); color: white; box-shadow: 0 8px 20px rgba(6,182,212,0.3); }
-.tab-content { display: none; animation: fadeIn 0.4s ease forwards; }
-.tab-content.active { display: block; }
-
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-/* Cards & Grid */
-.server-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; margin-bottom: 32px; }
-.card { background: var(--bg-card); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 20px; padding: 24px; transition: all 0.3s; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-.card:hover { transform: translateY(-4px); border-color: rgba(255,255,255,0.15); box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
-
-/* Accent lines for Server Cards */
-.server-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
-.server-card.iran::before { background: linear-gradient(90deg, var(--success), var(--primary)); }
-.server-card.kharej::before { background: linear-gradient(90deg, var(--primary), var(--secondary)); }
-
-.server-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.server-card-title { display: flex; align-items: center; gap: 12px; }
-.server-card-title h3 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
-.role-badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
-.role-badge.iran { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
-.role-badge.kharej { background: rgba(139,92,246,0.1); color: var(--secondary); border: 1px solid rgba(139,92,246,0.2); }
-.ssh-status { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.ssh-status .dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
-.ssh-status .dot.ok { background: var(--success); color: var(--success); }
-.ssh-status .dot.err { background: var(--danger); color: var(--danger); }
-
-.server-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.server-stat { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.03); border-radius: 12px; padding: 12px 16px; transition: all 0.2s; }
-.server-stat:hover { background: rgba(255,255,255,0.03); }
-.server-stat .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-.server-stat .value { font-size: 15px; font-weight: 600; margin-top: 4px; color: #fff; }
-
-.server-card-actions { display: flex; gap: 8px; margin-top: 20px; }
-.btn { padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.3s; border: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-.btn-outline { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); }
-.btn-outline:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
-.btn-primary { background: linear-gradient(135deg, var(--primary), #3b82f6); color: white; box-shadow: 0 4px 15px rgba(6,182,212,0.3); }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(6,182,212,0.4); }
-.btn-danger { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: var(--danger); }
-.btn-danger:hover { background: rgba(239,68,68,0.2); box-shadow: 0 4px 15px rgba(239,68,68,0.2); }
-.server-card-actions .btn { flex: 1; }
-
-/* Sections & Tunnels */
-.section { background: var(--bg-card); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 24px; margin-bottom: 32px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
-.section-header { padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.01); }
-.section-header h2 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
-.section-body { padding: 24px 32px; }
-
-.tunnel-list { display: flex; flex-direction: column; gap: 12px; }
-.tunnel-item { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 16px; padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; transition: all 0.3s; }
-.tunnel-item:hover { border-color: rgba(6,182,212,0.3); background: rgba(6,182,212,0.02); transform: translateX(4px); }
-.tunnel-left { display: flex; align-items: center; gap: 20px; }
-.tunnel-status { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
-.tunnel-status.running { background: var(--success); color: var(--success); }
-.tunnel-status.stopped { background: var(--danger); color: var(--danger); }
-.tunnel-name { font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 10px; }
-.tunnel-server-tag { background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 2px 10px; font-size: 11px; color: #c4b5fd; text-transform: uppercase; letter-spacing: 1px; }
-.cron-badge { background: rgba(6,182,212,0.15); border: 1px solid rgba(6,182,212,0.2); border-radius: 8px; padding: 2px 10px; font-size: 11px; color: #a5f3fc; }
-.tunnel-meta { font-size: 13px; color: var(--text-muted); margin-top: 6px; display: flex; gap: 16px; flex-wrap: wrap; font-weight: 500; }
-.tunnel-meta span { display: flex; align-items: center; gap: 4px; }
-
-.tunnel-actions { display: flex; gap: 8px; }
-.icon-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 14px; }
-.icon-btn:hover { background: rgba(255,255,255,0.1); color: #fff; transform: translateY(-2px); }
-.icon-btn.start { color: var(--success); border-color: rgba(16,185,129,0.2); } .icon-btn.start:hover { background: rgba(16,185,129,0.1); box-shadow: 0 4px 12px rgba(16,185,129,0.2); }
-.icon-btn.stop { color: var(--warning); border-color: rgba(245,158,11,0.2); } .icon-btn.stop:hover { background: rgba(245,158,11,0.1); box-shadow: 0 4px 12px rgba(245,158,11,0.2); }
-.icon-btn.restart { color: var(--primary); border-color: rgba(6,182,212,0.2); } .icon-btn.restart:hover { background: rgba(6,182,212,0.1); box-shadow: 0 4px 12px rgba(6,182,212,0.2); }
-.icon-btn.delete { color: var(--danger); border-color: rgba(239,68,68,0.2); } .icon-btn.delete:hover { background: rgba(239,68,68,0.1); box-shadow: 0 4px 12px rgba(239,68,68,0.2); }
-
-/* Empty States */
-.empty { text-align: center; padding: 60px 20px; color: var(--text-dark); grid-column: 1 / -1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.empty .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
-
-/* Modals */
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 200; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease; }
-.modal-overlay.show { display: flex; opacity: 1; }
-.modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 24px; width: 600px; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.8); transform: translateY(20px); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-.modal-overlay.show .modal { transform: translateY(0); }
-.modal-header { padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; }
-.modal-header h3 { font-size: 20px; font-weight: 600; }
-.modal-close { background: rgba(255,255,255,0.05); border: none; color: var(--text-muted); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 18px; }
-.modal-close:hover { background: rgba(239,68,68,0.1); color: var(--danger); transform: rotate(90deg); }
-.modal-body { padding: 32px; }
-.modal-footer { padding: 24px 32px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: flex-end; gap: 12px; background: rgba(0,0,0,0.2); }
-
-/* Forms */
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-.form-group label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-.form-group input, .form-group select, .form-group textarea { width: 100%; padding: 14px 16px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 14px; outline: none; transition: all 0.3s; }
-.form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(6,182,212,0.15); background: rgba(0,0,0,0.6); }
-.form-group textarea { min-height: 200px; resize: vertical; font-family: monospace; font-size: 13px; line-height: 1.6; }
-
-/* Logs */
-.logs-box { background: rgba(0,0,0,0.8); border: 1px solid var(--border); border-radius: 12px; padding: 16px; font-family: monospace; font-size: 13px; line-height: 1.6; max-height: 450px; overflow-y: auto; color: #a1a1aa; white-space: pre-wrap; word-break: break-all; box-shadow: inset 0 4px 20px rgba(0,0,0,0.5); }
-
-/* Toasts */
-.toast { position: fixed; bottom: 32px; right: 32px; background: rgba(20,20,20,0.9); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 16px; padding: 16px 24px; font-size: 14px; font-weight: 500; z-index: 300; transform: translateY(100px); opacity: 0; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 15px 40px rgba(0,0,0,0.6); display: flex; align-items: center; gap: 12px; }
-.toast.show { transform: translateY(0); opacity: 1; }
-.toast::before { content: ''; display: block; width: 10px; height: 10px; border-radius: 50%; }
-.toast.success::before { background: var(--success); box-shadow: 0 0 10px var(--success); }
-.toast.error::before { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
-.toast.info::before { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
-
-/* Wizard */
-.wizard-steps { display: flex; gap: 12px; margin-bottom: 32px; }
-.wizard-step { flex: 1; padding: 16px; text-align: center; border-radius: 16px; font-size: 13px; font-weight: 600; color: var(--text-dark); background: rgba(0,0,0,0.3); border: 1px solid var(--border); transition: all 0.3s; position: relative; overflow: hidden; }
-.wizard-step.active { color: #fff; border-color: var(--primary); background: rgba(6,182,212,0.1); box-shadow: 0 0 20px rgba(6,182,212,0.1); }
-.wizard-step.done { color: var(--success); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.05); }
-.wizard-page { display: none; animation: fadeIn 0.4s; }
-.wizard-page.active { display: block; }
-.connection-line { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 20px; }
-.connection-line .line { flex: 1; height: 2px; background: linear-gradient(90deg, rgba(16,185,129,0.5), rgba(6,182,212,0.5), rgba(139,92,246,0.5)); position: relative; overflow: hidden; }
-.connection-line .line::after { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, #fff, transparent); animation: flow 2s infinite; }
-@keyframes flow { 100% { left: 200%; } }
-.connection-line .arrow { color: var(--primary); font-size: 24px; filter: drop-shadow(0 0 8px var(--primary)); }
-
-.server-select-card { background: rgba(0,0,0,0.4); border: 2px solid var(--border); border-radius: 16px; padding: 20px; cursor: pointer; transition: all 0.3s; text-align: center; }
-.server-select-card:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.02); transform: translateY(-2px); }
-.server-select-card.selected { border-color: var(--primary); background: rgba(6,182,212,0.1); box-shadow: 0 8px 25px rgba(6,182,212,0.2); }
-.server-select-card h4 { margin-bottom: 6px; font-size: 16px; }
-.server-select-card p { font-size: 13px; color: var(--text-muted); font-family: monospace; }
+html[data-theme="light"]{
+  --bg:#eef2fb; --bg2:#dfe7f6;
+  --text:#0f1c33; --muted:#516081;
+  --glass:rgba(255,255,255,.65); --glass-brd:rgba(15,28,51,.10);
+  --field:rgba(15,28,51,.04); --field-brd:rgba(15,28,51,.14);
+  --shadow:0 30px 70px -24px rgba(40,60,120,.40);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  min-height:100vh;display:grid;place-items:center;padding:20px;
+  color:var(--text);background:var(--bg);position:relative;overflow:hidden;
+}
+.aurora{position:fixed;inset:-30%;z-index:0;filter:blur(90px);opacity:.85;pointer-events:none}
+.aurora i{position:absolute;display:block;border-radius:50%;mix-blend-mode:screen}
+.aurora .b1{width:46vw;height:46vw;left:-6vw;top:-6vw;background:radial-gradient(circle,#22d3ee,transparent 60%);animation:float1 16s ease-in-out infinite}
+.aurora .b2{width:42vw;height:42vw;right:-8vw;top:6vw;background:radial-gradient(circle,#6366f1,transparent 60%);animation:float2 19s ease-in-out infinite}
+.aurora .b3{width:40vw;height:40vw;left:24vw;bottom:-14vw;background:radial-gradient(circle,#2dd4bf,transparent 60%);animation:float3 22s ease-in-out infinite}
+html[data-theme="light"] .aurora{opacity:.5}
+@keyframes float1{50%{transform:translate(6vw,4vh) scale(1.1)}}
+@keyframes float2{50%{transform:translate(-5vw,5vh) scale(1.08)}}
+@keyframes float3{50%{transform:translate(3vw,-5vh) scale(1.12)}}
+.card{
+  position:relative;z-index:1;width:100%;max-width:410px;
+  background:var(--glass);border:1px solid var(--glass-brd);border-radius:24px;
+  backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);
+  box-shadow:var(--shadow);padding:40px 34px;
+  animation:rise .6s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(18px) scale(.98)}}
+.brand{display:flex;flex-direction:column;align-items:center;gap:16px;margin-bottom:26px;text-align:center}
+.logo{
+  width:64px;height:64px;border-radius:20px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  box-shadow:0 12px 34px -8px var(--accent2);color:#031018;
+}
+.logo svg{width:34px;height:34px}
+.brand h1{font-size:22px;font-weight:800;letter-spacing:-.4px}
+.brand p{color:var(--muted);font-size:13px;margin-top:2px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 7px 4px;text-transform:uppercase;letter-spacing:.5px}
+.input{position:relative}
+.input svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--muted)}
+.input input{
+  width:100%;padding:14px 14px 14px 44px;border-radius:14px;font-size:15px;
+  background:var(--field);border:1px solid var(--field-brd);color:var(--text);
+  transition:.18s;outline:none;
+}
+.input input:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+.toggle-pass{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;padding:8px;border-radius:8px}
+.toggle-pass:hover{color:var(--text)}
+.btn{
+  width:100%;padding:14px;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;
+  color:#03131a;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  box-shadow:0 14px 30px -10px var(--accent2);transition:.18s;margin-top:8px;
+  display:flex;align-items:center;justify-content:center;gap:9px;
+}
+.btn:hover{transform:translateY(-2px);filter:brightness(1.06)}
+.btn:active{transform:translateY(0)}
+.btn:disabled{opacity:.7;cursor:not-allowed;transform:none}
+.spinner{width:18px;height:18px;border:2.5px solid rgba(0,0,0,.25);border-top-color:#03131a;border-radius:50%;animation:spin .7s linear infinite;display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{
+  background:color-mix(in srgb,var(--danger) 16%,transparent);
+  border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);
+  color:var(--danger);padding:11px 14px;border-radius:12px;font-size:13px;margin-bottom:16px;
+  display:none;align-items:center;gap:8px;animation:shake .4s}
+@keyframes shake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.foot{text-align:center;margin-top:22px;color:var(--muted);font-size:12px}
+.theme-btn{position:fixed;top:18px;right:18px;z-index:3;width:42px;height:42px;border-radius:12px;
+  background:var(--glass);border:1px solid var(--glass-brd);backdrop-filter:blur(14px);
+  color:var(--text);cursor:pointer;display:grid;place-items:center}
+.theme-btn:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
-<div class="bg-glow-1"></div><div class="bg-glow-2"></div>
+<div class="aurora"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+<button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
 
-<div class="topbar">
-<div class="topbar-left">
-<div class="topbar-logo">BACKHAUL</div>
-<div class="topbar-badge">Premium v2.6.0</div>
-</div>
-<div class="topbar-right">
-<button class="btn-logout" onclick="doLogout()">Logout</button>
-</div>
-</div>
+<form class="card" id="loginForm" autocomplete="on">
+  <div class="brand">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16M4 7l3-3m-3 3 3 3M20 17H4m16 0-3-3m3 3-3 3"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Backhaul Panel</h1>
+      <p>Multi-server tunnel manager</p>
+    </div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <div class="field">
+    <label for="u">Username</label>
+    <div class="input">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <input id="u" name="username" type="text" placeholder="admin" autocomplete="username" required autofocus>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="p">Password</label>
+    <div class="input">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <input id="p" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+      <button type="button" class="toggle-pass" id="togglePass" aria-label="Show password">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <button class="btn" type="submit" id="submitBtn">
+    <span class="spinner" id="spin"></span>
+    <span id="btnText">Sign in</span>
+  </button>
+
+  <p class="foot">Secured session · Backhaul Manager</p>
+</form>
+
+<script>
+const SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
+function applyTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('bh_theme',t);document.getElementById('themeBtn').innerHTML=t==='dark'?SUN:MOON;}
+let theme=localStorage.getItem('bh_theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+applyTheme(theme);
+document.getElementById('themeBtn').onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
+
+const tp=document.getElementById('togglePass'),pi=document.getElementById('p');
+tp.onclick=()=>{pi.type=pi.type==='password'?'text':'password';};
+
+const form=document.getElementById('loginForm'),err=document.getElementById('err'),
+      spin=document.getElementById('spin'),btn=document.getElementById('submitBtn'),btnText=document.getElementById('btnText');
+form.addEventListener('submit',async(e)=>{
+  e.preventDefault();err.style.display='none';
+  btn.disabled=true;spin.style.display='inline-block';btnText.textContent='Signing in…';
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:document.getElementById('u').value,password:pi.value})});
+    const d=await r.json();
+    if(d.success){btnText.textContent='Welcome!';location.href='/';}
+    else{throw new Error(d.error||'Invalid credentials');}
+  }catch(ex){
+    err.textContent='⚠ '+ex.message;err.style.display='flex';
+    btn.disabled=false;spin.style.display='none';btnText.textContent='Sign in';
+    pi.value='';pi.focus();
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+def get_main_page():
+    return """<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backhaul Panel</title>
+<style>
+:root{
+  --acc:#22d3ee; --acc-h:#06b6d4; --acc2:#6366f1;
+  --bg:#070b16; --bg2:#0d1426; --card:rgba(18,26,46,.5);
+  --brd:rgba(255,255,255,.08); --text:#e2e8f0; --mut:#94a3b8;
+  --succ:#10b981; --err:#f43f5e; --warn:#f59e0b;
+}
+html[data-theme="light"]{
+  --bg:#f1f5f9; --bg2:#e2e8f0; --card:rgba(255,255,255,.6);
+  --brd:rgba(0,0,0,.08); --text:#0f172a; --mut:#64748b;
+}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
+body{background:var(--bg);color:var(--text);overflow-x:hidden;transition:background .2s}
+.bg-glow{position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(circle at 10% 20%,rgba(99,102,241,.08) 0%,transparent 50%),radial-gradient(circle at 90% 80%,rgba(34,211,238,.08) 0%,transparent 50%)}
+
+nav{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--brd);background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(12px);position:sticky;top:0;z-index:100}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;color:#fff}
+.logo svg{width:20px;height:20px}
+.nav-actions{display:flex;gap:12px}
+
+.btn{padding:8px 16px;border-radius:10px;border:none;background:var(--card);border:1px solid var(--brd);color:var(--text);cursor:pointer;font-weight:600;display:flex;align-items:center;gap:8px;transition:.2s}
+.btn:hover{background:var(--bg2)}
+.btn-primary{background:var(--acc);color:#000;border:none}
+.btn-primary:hover{background:var(--acc-h)}
+.btn-danger{color:var(--err);border-color:color-mix(in srgb,var(--err) 30%,transparent);background:color-mix(in srgb,var(--err) 10%,transparent)}
+.btn-danger:hover{background:var(--err);color:#fff}
+
+.container{max-width:1400px;margin:0 auto;padding:24px}
+.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;flex-wrap:wrap;gap:16px}
+.header h2{font-size:24px;font-weight:700}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px}
+.card{background:var(--card);border:1px solid var(--brd);border-radius:16px;padding:20px;backdrop-filter:blur(16px)}
+
+/* Server Cards */
+.srv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.srv-name{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700}
+.badge{padding:4px 8px;border-radius:6px;font-size:11px;font-weight:700;text-transform:uppercase}
+.b-iran{background:color-mix(in srgb,var(--succ) 15%,transparent);color:var(--succ);border:1px solid color-mix(in srgb,var(--succ) 30%,transparent)}
+.b-kharej{background:color-mix(in srgb,var(--acc2) 15%,transparent);color:var(--acc2);border:1px solid color-mix(in srgb,var(--acc2) 30%,transparent)}
+.srv-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.stat{background:var(--bg2);padding:10px;border-radius:10px;font-size:12px}
+.stat span{display:block;color:var(--mut);margin-bottom:4px}
+.stat b{font-size:14px}
+.srv-actions{display:flex;gap:8px;margin-top:16px}
+.srv-actions .btn{flex:1;justify-content:center;padding:8px}
+
+/* Tunnel Cards */
+.tun-card{border-left:4px solid var(--acc2)}
+.tun-card.running{border-left-color:var(--succ)}
+.tun-card.stopped{border-left-color:var(--err)}
+.tun-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.tun-title{font-weight:600;font-family:monospace;font-size:14px}
+.tun-status{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%}
+.running .dot{background:var(--succ);box-shadow:0 0 8px var(--succ)}
+.stopped .dot{background:var(--err)}
+.tun-info{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut);margin-bottom:16px}
+.tun-info div{display:flex;align-items:center;gap:4px;background:var(--bg2);padding:4px 8px;border-radius:6px}
+
+/* Modals */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.2s}
+.modal.show{opacity:1;pointer-events:auto}
+.m-box{background:var(--bg);border:1px solid var(--brd);border-radius:20px;width:100%;max-width:500px;max-height:90vh;display:flex;flex-direction:column;transform:scale(.95);transition:.2s}
+.modal.show .m-box{transform:scale(1)}
+.m-head{padding:20px;border-bottom:1px solid var(--brd);display:flex;justify-content:space-between;align-items:center}
+.m-head h3{font-size:18px}
+.m-close{background:none;border:none;color:var(--mut);cursor:pointer}
+.m-close:hover{color:var(--text)}
+.m-body{padding:20px;overflow-y:auto}
+.m-foot{padding:20px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:12px}
+
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--mut);margin-bottom:6px}
+.field input,.field select{width:100%;padding:10px 14px;background:var(--bg2);border:1px solid var(--brd);color:var(--text);border-radius:10px;outline:none}
+.field input:focus,.field select:focus{border-color:var(--acc)}
+
+.term{background:#000;color:#0f0;font-family:monospace;padding:16px;border-radius:12px;overflow-x:auto;font-size:13px;line-height:1.5;max-height:400px;overflow-y:auto;white-space:pre-wrap}
+
+#toast{position:fixed;bottom:24px;right:24px;background:var(--card);backdrop-filter:blur(10px);border:1px solid var(--brd);padding:12px 20px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.3);transform:translateY(100px);opacity:0;transition:.3s cubic-bezier(.2,.8,.2,1);z-index:9999;display:flex;align-items:center;gap:10px;font-weight:500}
+#toast.show{transform:translateY(0);opacity:1}
+#toast.succ{border-left:4px solid var(--succ)}
+#toast.err{border-left:4px solid var(--err)}
+
+.tabs{display:flex;gap:4px;background:var(--bg2);padding:4px;border-radius:12px;margin-bottom:20px}
+.tab{flex:1;text-align:center;padding:8px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--mut)}
+.tab.active{background:var(--card);color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.2)}
+
+.loader{border:3px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:20px;height:20px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="bg-glow"></div>
+
+<nav>
+  <div class="brand">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 7l3-3m-3 3 3 3M20 17H4m16 0-3-3m3 3-3 3"/></svg></div>
+    Backhaul Panel
+  </div>
+  <div class="nav-actions">
+    <button class="btn" onclick="openModal('m-settings')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
+    <button class="btn btn-danger" onclick="logout()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+  </div>
+</nav>
 
 <div class="container">
-<div class="tabs">
-<button class="tab active" onclick="switchTab('dashboard')">Dashboard</button>
-<button class="tab" onclick="switchTab('servers')">Servers</button>
-<button class="tab" onclick="switchTab('tunnels')">Tunnels</button>
-<button class="tab" onclick="switchTab('create')">Create Tunnel</button>
-<button class="tab" onclick="switchTab('diagnostics')">Diagnostics</button>
-<button class="tab" onclick="switchTab('settings')">Settings</button>
-</div>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('servers',this)">Servers</div>
+    <div class="tab" onclick="switchTab('tunnels',this)">Tunnels</div>
+    <div class="tab" onclick="switchTab('create',this)">New Tunnel</div>
+  </div>
 
-<!-- Dashboard -->
-<div class="tab-content active" id="tab-dashboard">
-<div class="server-grid" id="server-grid">
-<div class="empty"><div class="icon">⌛</div><p>Loading premium servers...</p></div>
-</div>
-<div class="section">
-<div class="section-header"><h2>Active Tunnels</h2><button class="btn btn-outline" onclick="refreshAll()">Refresh</button></div>
-<div class="section-body"><div class="tunnel-list" id="dashboard-tunnels"><div class="empty"><p>No tunnels found.</p></div></div></div>
-</div>
-</div>
+  <div id="tab-servers">
+    <div class="header">
+      <h2>Servers</h2>
+      <button class="btn btn-primary" onclick="openModal('m-add-server')">+ Add Server</button>
+    </div>
+    <div class="grid" id="serversGrid"><div class="loader" style="margin:20px auto"></div></div>
+  </div>
 
-<!-- Servers -->
-<div class="tab-content" id="tab-servers">
-<div class="section">
-<div class="section-header"><h2>Server Management</h2><button class="btn btn-primary" onclick="showAddServer()">+ Add Server</button></div>
-<div class="section-body"><div class="server-grid" id="server-manage-grid"></div></div>
-</div>
-</div>
+  <div id="tab-tunnels" style="display:none">
+    <div class="header">
+      <h2>Active Tunnels</h2>
+      <button class="btn" onclick="fetchTunnels()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Refresh</button>
+    </div>
+    <div class="grid" id="tunnelsGrid"><div class="loader" style="margin:20px auto"></div></div>
+  </div>
 
-<!-- Tunnels -->
-<div class="tab-content" id="tab-tunnels">
-<div class="section">
-<div class="section-header"><h2>All Tunnels</h2><button class="btn btn-outline" onclick="refreshAll()">Refresh</button></div>
-<div class="section-body"><div class="tunnel-list" id="all-tunnels"><div class="empty"><p>No tunnels found.</p></div></div></div>
-</div>
-</div>
-
-<!-- Create Tunnel -->
-<div class="tab-content" id="tab-create">
-<div class="section">
-<div class="section-header"><h2>Create New Tunnel</h2></div>
-<div class="section-body">
-<div class="wizard-steps">
-<div class="wizard-step active" id="ws1">1. Select Servers</div>
-<div class="wizard-step" id="ws2">2. Configuration</div>
-<div class="wizard-step" id="ws3">3. Deploying</div>
-</div>
-<div class="wizard-page active" id="wp1">
-<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;text-align:center">Select the origin and destination servers to establish a secure tunnel.</p>
-<div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:20px;align-items:center">
-<div>
-<div style="font-size:13px;color:var(--success);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">IRAN (LISTENER)</div>
-<div id="iran-server-select"></div>
-</div>
-<div class="connection-line"><div class="line"></div><div class="arrow">⚡</div><div class="line"></div></div>
-<div>
-<div style="font-size:13px;color:var(--secondary);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">KHAREJ (CONNECTOR)</div>
-<div id="kharej-server-select"></div>
-</div>
-</div>
-<div style="text-align:right;margin-top:32px"><button class="btn btn-primary" onclick="wizardNext(2)">Next Step →</button></div>
-</div>
-<div class="wizard-page" id="wp2">
-<div class="form-row">
-<div class="form-group"><label>Transport Protocol</label><select id="wiz-transport"><option value="wssmux">WSSMUX (TLS Encrypted - Recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
-<div class="form-group"><label>Tunnel Port</label><input id="wiz-port" value="9743"></div>
-</div>
-<div class="form-row">
-<div class="form-group"><label>Authentication Token</label><input id="wiz-token" placeholder="Leave empty to auto-generate"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Secure 32-char token will be generated if empty</small></div>
-</div>
-<div class="form-row">
-<div class="form-group"><label>🇮🇷 Iran Port (Listen)</label><input id="wiz-iran-port" type="number" value="443" min="1" max="65535" placeholder="e.g. 443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Port to listen on the Iran server</small></div>
-<div class="form-group"><label>🌍 Kharej Port (Target)</label><input id="wiz-kharej-port" type="number" value="443" min="1" max="65535" placeholder="e.g. 443"><small style="color:var(--text-dark);font-size:11px;margin-top:4px;display:block">Port on Kharej to forward traffic to</small></div>
-</div>
-<div style="display:flex;justify-content:space-between;margin-top:32px">
-<button class="btn btn-outline" onclick="wizardNext(1)">← Back</button>
-<button class="btn btn-primary" onclick="wizardNext(3)">Launch Tunnel 🚀</button>
-</div>
-</div>
-<div class="wizard-page" id="wp3">
-<div id="deploy-status" style="text-align:center;padding:40px 20px">
-<div style="font-size:40px;margin-bottom:20px;animation:spin 2s linear infinite">⚙️</div>
-<div style="font-size:18px;font-weight:600;color:var(--text)">Deploying infrastructure...</div>
-<div style="font-size:14px;color:var(--text-muted);margin-top:8px">Establishing secure connection between nodes.</div>
-</div>
-<div id="deploy-result" style="display:none"></div>
-</div>
-</div>
-</div>
-</div>
-
-<!-- Diagnostics -->
-<div class="tab-content" id="tab-diagnostics">
-<div class="section">
-<div class="section-header"><h2>Node-to-Node Diagnostics</h2></div>
-<div class="section-body">
-<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;text-align:center">Test reachability, TCP open ports, and ping latency between an Iran node and Kharej node before tunneling.</p>
-<div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:20px;align-items:center">
-<div>
-<div style="font-size:13px;color:var(--success);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">IRAN (TESTER)</div>
-<div class="form-group"><select id="diag-iran-select"><option value="">Select Iran Server</option></select></div>
-</div>
-<div class="connection-line" style="padding:0"><div class="line"></div><div class="arrow">🏓</div><div class="line"></div></div>
-<div>
-<div style="font-size:13px;color:var(--secondary);font-weight:800;margin-bottom:12px;text-align:center;letter-spacing:1px">KHAREJ (TARGET)</div>
-<div class="form-group"><select id="diag-kharej-select"><option value="">Select Kharej Server</option></select></div>
-</div>
-</div>
-<div class="form-row" style="margin-top:20px;justify-content:center;display:flex">
-<div class="form-group" style="width:200px"><label>Test Port (Kharej Listener)</label><input type="number" id="diag-port" value="9999"></div>
-</div>
-<div style="text-align:center;margin-top:24px">
-<button class="btn btn-primary" onclick="runDiagnostics()" id="btn-run-diag" style="width:200px">Run Diagnostics</button>
-</div>
-<div id="diag-results" style="display:none;margin-top:32px">
-<div class="card" style="background:rgba(0,0,0,0.5)">
-<h3 style="text-align:center;margin-bottom:20px" id="diag-verdict"></h3>
-<div class="server-stats">
-<div class="server-stat"><div class="label">TCP Reachability</div><div class="value" id="diag-tcp"></div></div>
-<div class="server-stat"><div class="label">Packet Loss</div><div class="value" id="diag-loss"></div></div>
-<div class="server-stat"><div class="label">Average Ping</div><div class="value" id="diag-ping"></div></div>
-<div class="server-stat"><div class="label">Overall Score</div><div class="value" id="diag-score"></div></div>
-</div>
-<div style="margin-top:20px">
-<label style="font-size:12px;color:var(--text-muted);font-weight:600">Raw Ping Output:</label>
-<pre id="diag-raw" class="logs-box" style="margin-top:8px;max-height:150px"></pre>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-
-<!-- Settings -->
-<div class="tab-content" id="tab-settings">
-<div class="section" style="max-width:600px;margin:0 auto">
-<div class="section-header"><h2>Panel Settings</h2></div>
-<div class="section-body">
-<p style="font-size:14px;color:var(--text-muted);margin-bottom:24px">Update the credentials used to access this web panel.</p>
-<div class="form-group">
-<label>New Username</label>
-<input type="text" id="set-username" placeholder="admin">
-</div>
-<div class="form-group">
-<label>New Password</label>
-<input type="password" id="set-password" placeholder="Enter new password">
-</div>
-<div style="text-align:right;margin-top:24px">
-<button class="btn btn-primary" onclick="updateSettings()">Save Credentials</button>
-</div>
-</div>
-</div>
-</div>
-
+  <div id="tab-create" style="display:none">
+    <div class="header"><h2>Create Matching Tunnel (Iran + Kharej)</h2></div>
+    <div class="card" style="max-width:800px;margin:0 auto">
+      <form id="createBothForm" onsubmit="createBothTunnel(event)">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <div>
+            <div class="field">
+              <label>Iran Server (Local)</label>
+              <select id="cb-iran" required></select>
+            </div>
+            <div class="field">
+              <label>Ports Mapping (Iran config)</label>
+              <input id="cb-ports" placeholder='e.g. "443=127.0.0.1:443" or "80=127.0.0.1:80"' required>
+            </div>
+          </div>
+          <div>
+            <div class="field">
+              <label>Kharej Server (Remote)</label>
+              <select id="cb-kharej" required></select>
+            </div>
+            <div class="field">
+              <label>Transport</label>
+              <select id="cb-trans"><option value="wssmux">WSSMUX (Recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select>
+            </div>
+            <div class="field">
+              <label>Tunnel Port</label>
+              <input id="cb-port" type="number" value="9743" required>
+            </div>
+            <div class="field">
+              <label>Custom Token (Leave blank for auto)</label>
+              <input id="cb-token" placeholder="Optional secure token">
+            </div>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px" id="cb-btn">Create & Connect Tunnel</button>
+      </form>
+    </div>
+  </div>
 </div>
 
 <!-- Modals -->
-<div class="modal-overlay" id="modal-add-server">
-<div class="modal">
-<div class="modal-header"><h3 id="server-modal-title">Add Server</h3><button class="modal-close" onclick="closeModal('modal-add-server')">✕</button></div>
-<div class="modal-body">
-<div id="add-srv-form-fields">
-<div class="form-group"><label>Server Label</label><input id="srv-name" placeholder="e.g. Tehran Node 1"></div>
-<div class="form-row">
-<div class="form-group"><label>IP Address / Domain</label><input id="srv-ip" placeholder="1.2.3.4"></div>
-<div class="form-group"><label>Server Role</label><select id="srv-role"><option value="iran">IRAN (Origin)</option><option value="kharej">KHAREJ (Destination)</option></select></div>
-</div>
-<div class="form-row">
-<div class="form-group"><label>SSH Username</label><input id="srv-ssh-user" value="root"></div>
-<div class="form-group"><label>SSH Port</label><input id="srv-ssh-port" value="22" type="number"></div>
-</div>
-<div class="form-row">
-<div class="form-group"><label>SSH Password</label><input id="srv-ssh-password" type="password" placeholder="Password (Optional if key used)"></div>
-<div class="form-group"><label>SSH Key Path</label><input id="srv-ssh-key" placeholder="/root/.ssh/id_rsa"></div>
-</div>
-</div>
-<div id="add-srv-progress-container" style="display:none; margin-top:10px;">
-  <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:600;">
-    <span id="add-srv-status-text" style="color:var(--text-muted)">Testing connection...</span>
-    <span id="add-srv-pct-text" style="color:var(--primary)">0%</span>
+<div class="modal" id="m-add-server">
+  <div class="m-box">
+    <div class="m-head"><h3>Add Server</h3><button class="m-close" onclick="closeModal('m-add-server')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <form onsubmit="addServer(event)">
+      <div class="m-body">
+        <div class="field"><label>Server Name</label><input id="as-name" required placeholder="e.g. Tehran Datacenter"></div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+          <div class="field"><label>IP Address / Domain</label><input id="as-ip" required placeholder="IP or 127.0.0.1"></div>
+          <div class="field"><label>Role</label><select id="as-role"><option value="iran">Iran</option><option value="kharej">Kharej</option></select></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="field"><label>SSH User</label><input id="as-user" value="root"></div>
+          <div class="field"><label>SSH Port</label><input id="as-port" type="number" value="22"></div>
+        </div>
+        <div class="field"><label>SSH Password (or empty if using key)</label><input id="as-pass" type="password"></div>
+        <div class="field"><label>SSH Key (Optional absolute path)</label><input id="as-key" placeholder="/root/.ssh/id_rsa"></div>
+      </div>
+      <div class="m-foot">
+        <button type="button" class="btn" onclick="closeModal('m-add-server')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Server</button>
+      </div>
+    </form>
   </div>
-  <div style="width:100%; height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
-    <div id="add-srv-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--primary), var(--secondary)); transition:width 0.4s ease, background 0.4s ease; border-radius:4px;"></div>
+</div>
+
+<div class="modal" id="m-term">
+  <div class="m-box" style="max-width:800px">
+    <div class="m-head"><h3 id="term-title">Logs</h3><button class="m-close" onclick="closeModal('m-term')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="m-body"><div class="term" id="term-out">Loading...</div></div>
   </div>
-  <div id="add-srv-error-details" style="display:none; color:var(--danger); font-size:12px; margin-top:15px; font-family:monospace; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:12px; text-align:left; line-height:1.5;"></div>
-</div>
-</div>
-<div class="modal-footer">
-<button class="btn btn-outline" onclick="closeModal('modal-add-server')">Cancel</button>
-<button class="btn btn-primary" onclick="saveServer()">Save Server</button>
-</div>
-</div>
 </div>
 
-<div class="modal-overlay" id="modal-logs">
-<div class="modal" style="width:800px"><div class="modal-header"><h3>Live Logs</h3><button class="modal-close" onclick="closeModal('modal-logs')">✕</button></div><div class="modal-body"><div class="logs-box" id="logs-content">Fetching logs...</div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modal-logs')">Close</button></div></div>
+<div class="modal" id="m-edit">
+  <div class="m-box" style="max-width:800px">
+    <div class="m-head"><h3 id="edit-title">Edit Config</h3><button class="m-close" onclick="closeModal('m-edit')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="m-body"><textarea id="edit-text" style="width:100%;height:350px;background:#000;color:#0f0;font-family:monospace;padding:12px;border-radius:8px;border:none" spellcheck="false"></textarea></div>
+    <div class="m-foot">
+      <button class="btn" onclick="closeModal('m-edit')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveConfig()">Save & Restart</button>
+    </div>
+  </div>
 </div>
 
-<div class="modal-overlay" id="modal-config">
-<div class="modal" style="width:700px"><div class="modal-header"><h3>Edit Configuration</h3><button class="modal-close" onclick="closeModal('modal-config')">✕</button></div><div class="modal-body"><div class="form-group"><textarea id="config-content" spellcheck="false"></textarea></div></div><div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('modal-config')">Cancel</button><button class="btn btn-primary" onclick="doSaveConfig()">Save & Restart</button></div></div>
+<div class="modal" id="m-settings">
+  <div class="m-box">
+    <div class="m-head"><h3>Settings</h3><button class="m-close" onclick="closeModal('m-settings')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <form onsubmit="saveSettings(event)">
+      <div class="m-body">
+        <div class="field"><label>Admin Username</label><input id="set-u" required></div>
+        <div class="field"><label>New Password</label><input id="set-p" type="password" placeholder="Leave empty to keep current"></div>
+      </div>
+      <div class="m-foot"><button type="submit" class="btn btn-primary">Update Settings</button></div>
+    </form>
+  </div>
 </div>
 
-<div class="modal-overlay" id="modal-cron">
-<div class="modal" style="width:480px"><div class="modal-header"><h3>Auto-Restart Schedule</h3><button class="modal-close" onclick="closeModal('modal-cron')">✕</button></div>
-<div class="modal-body">
-<p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">Configure auto-restart interval for <strong id="cron-svc-name" style="color:#fff"></strong> to maintain optimal speed and clear cache.</p>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;" id="cron-options">
-<div class="btn btn-outline cron-option" data-min="30">30 Minutes</div>
-<div class="btn btn-outline cron-option" data-min="60">1 Hour</div>
-<div class="btn btn-outline cron-option" data-min="120">2 Hours</div>
-<div class="btn btn-outline cron-option" data-min="360">6 Hours</div>
-</div>
-</div>
-<div class="modal-footer">
-<button class="btn btn-danger" onclick="doRemoveCron()" id="btn-remove-cron" style="margin-right:auto;display:none">Disable Cron</button>
-<button class="btn btn-outline" onclick="closeModal('modal-cron')">Cancel</button>
-<button class="btn btn-primary" onclick="doSetCron()">Apply Schedule</button>
-</div>
-</div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<style>
-@keyframes spin { 100% { transform: rotate(360deg); } }
-</style>
+<div id="toast"></div>
 
 <script>
-let servers=[]; let selectedIran=""; let selectedKharej=""; let editingServerId=""; let currentCronSvc=""; let currentCronServerId=""; let currentConfigSvc=""; let currentConfigServerId="";
-function showToast(m,t="info"){const e=document.getElementById("toast");e.textContent=m;e.className="toast "+t+" show";setTimeout(()=>e.classList.remove("show"),3500)}
-function closeModal(id){document.getElementById(id).classList.remove("show")}
-function switchTab(name){document.querySelectorAll(".tab").forEach((t,i)=>t.classList.remove("active"));document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));document.querySelectorAll(".tab").forEach(t=>{if(t.textContent.toLowerCase().includes(name)){t.classList.add("active")}});document.getElementById("tab-"+name).classList.add("active"); if(name==='settings'){loadCurrentSettings();}}
-
-async function api(url,body){const opts=body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};const r=await fetch(url,opts);if(r.status===401){window.location.href="/login.html";return null}return r.json()}
-async function doLogout(){await api("/api/auth/logout");window.location.href="/login.html"}
-
-async function loadServers(){
-const d=await api("/api/servers");
-if(d&&d.servers){servers=d.servers;renderServerCards();renderServerManage();renderCreateWizard();renderDashboardTunnels();renderDiagnostics();}
-}
-
-function renderServerCards(){
-const g=document.getElementById("server-grid");
-if(servers.length===0){g.innerHTML='<div class="empty"><div class="icon">🖥️</div><p>No servers added yet. Head to Servers tab.</p></div>';return}
-g.innerHTML=servers.map(s=>{
-const roleClass=s.role==="iran"?"iran":"kharej";
-const sshDot=s.ssh_ok?"ok":"err"; const sshText=s.ssh_ok?"Online":"Offline";
-return `<div class="card server-card ${roleClass}">
-<div class="server-card-header">
-<div class="server-card-title"><h3>${s.name}</h3><span class="role-badge ${roleClass}">${s.role}</span></div>
-<div class="ssh-status"><span class="dot ${sshDot}"></span>${sshText}</div>
-</div>
-<div class="server-stats">
-<div class="server-stat"><div class="label">IP Address</div><div class="value" style="color:var(--primary);font-family:monospace">${s.ip}</div></div>
-<div class="server-stat"><div class="label">Backhaul</div><div class="value">${s.version||"N/A"}</div></div>
-<div class="server-stat"><div class="label">Memory</div><div class="value">${s.memory||"—"}</div></div>
-<div class="server-stat"><div class="label">Disk</div><div class="value">${s.disk||"—"}</div></div>
-</div>
-</div>`}).join("");
-}
-
-function renderServerManage(){
-const g=document.getElementById("server-manage-grid");
-if(servers.length===0){g.innerHTML='<div class="empty"><p>No servers configured.</p></div>';return}
-g.innerHTML=servers.map(s=>{
-const roleClass=s.role==="iran"?"iran":"kharej";
-return `<div class="card server-card ${roleClass}">
-<div class="server-card-header">
-<div class="server-card-title"><h3>${s.name}</h3><span class="role-badge ${roleClass}">${s.role}</span></div>
-</div>
-<div class="server-stats">
-<div class="server-stat"><div class="label">IP Address</div><div class="value" style="color:var(--primary);font-family:monospace">${s.ip}</div></div>
-<div class="server-stat"><div class="label">SSH User</div><div class="value">${s.ssh_user}</div></div>
-<div class="server-stat"><div class="label">SSH Port</div><div class="value">${s.ssh_port||22}</div></div>
-<div class="server-stat"><div class="label">Auth Type</div><div class="value">${s.ssh_password?"Password":"Key"}</div></div>
-</div>
-<div class="server-card-actions">
-<button class="btn btn-outline" onclick="installBinary('${s.id}')">Install Binary</button>
-<button class="btn btn-outline" onclick="editServer('${s.id}')">Edit</button>
-<button class="btn btn-danger" onclick="deleteServer('${s.id}','${s.name}')">Delete</button>
-</div>
-</div>`}).join("");
-}
-
-function renderCreateWizard(){
-const iran=servers.filter(s=>s.role==="iran"); const kharej=servers.filter(s=>s.role==="kharej");
-document.getElementById("iran-server-select").innerHTML=iran.length?iran.map(s=>`<div class="server-select-card ${selectedIran===s.id?"selected":""}" onclick="selectIran('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Iran server added</p></div>';
-document.getElementById("kharej-server-select").innerHTML=kharej.length?kharej.map(s=>`<div class="server-select-card ${selectedKharej===s.id?"selected":""}" onclick="selectKharej('${s.id}')"><h4>${s.name}</h4><p>${s.ip}</p></div>`).join(""):'<div class="empty" style="padding:20px"><p style="font-size:12px">No Kharej server added</p></div>';
-}
-
-function renderDiagnostics(){
-const iran=servers.filter(s=>s.role==="iran"); const kharej=servers.filter(s=>s.role==="kharej");
-document.getElementById("diag-iran-select").innerHTML='<option value="">Select Iran Server</option>'+iran.map(s=>`<option value="${s.id}">${s.name} (${s.ip})</option>`).join("");
-document.getElementById("diag-kharej-select").innerHTML='<option value="">Select Kharej Server</option>'+kharej.map(s=>`<option value="${s.id}">${s.name} (${s.ip})</option>`).join("");
-}
-
-async function runDiagnostics(){
-const iran_id = document.getElementById("diag-iran-select").value;
-const kharej_id = document.getElementById("diag-kharej-select").value;
-const port = document.getElementById("diag-port").value;
-if(!iran_id || !kharej_id){showToast("Please select both servers","error");return;}
-const btn = document.getElementById("btn-run-diag");
-btn.disabled = true; btn.textContent = "Testing... Please wait (up to 20s)";
-document.getElementById("diag-results").style.display = "none";
-const r = await api("/api/tunnel/diagnostics", {iran_id: iran_id, kharej_id: kharej_id, test_port: port});
-btn.disabled = false; btn.textContent = "Run Diagnostics";
-if(r && r.success){
-document.getElementById("diag-results").style.display = "block";
-document.getElementById("diag-verdict").textContent = r.verdict;
-document.getElementById("diag-verdict").style.color = r.score > 80 ? "var(--success)" : r.score > 40 ? "var(--warning)" : "var(--danger)";
-document.getElementById("diag-tcp").innerHTML = r.tcp_open ? '<span style="color:var(--success)">OPEN</span>' : '<span style="color:var(--danger)">BLOCKED/CLOSED</span>';
-document.getElementById("diag-loss").textContent = r.ping_loss;
-document.getElementById("diag-ping").textContent = r.ping_avg;
-document.getElementById("diag-score").textContent = r.score + "/100";
-document.getElementById("diag-score").style.color = r.score > 80 ? "var(--success)" : r.score > 40 ? "var(--warning)" : "var(--danger)";
-document.getElementById("diag-raw").textContent = r.ping_raw;
-showToast("Diagnostics completed","success");
-}else{
-showToast("Diagnostics failed","error");
-}
-}
-
-function renderDashboardTunnels(){
-api("/api/tunnels").then(d=>{
-if(!d)return;
-const list=document.getElementById("dashboard-tunnels"); const tl=document.getElementById("all-tunnels");
-const tunnels=d.tunnels||[];
-if(tunnels.length===0){const h='<div class="empty"><div class="icon">🔍</div><p>No active tunnels discovered.</p></div>';list.innerHTML=h;tl.innerHTML=h;return}
-const paired={};
-tunnels.forEach(t=>{
-  const match=t.service.match(/^backhaul-(iran|kharej)-(.+)-([0-9]+)(?:\\.service)?$/);
-  if(match){
-    const role=match[1]; const trans=match[2]; const port=match[3]; const key=trans+"-"+port;
-    if(!paired[key])paired[key]={key:key,trans:trans,port:port,iran:null,kharej:null};
-    paired[key][role]=t;
-  }else{
-    paired[t.service]={key:t.service,single:t};
-  }
-});
-const html=Object.values(paired).map(p=>{
-if(p.single){
-  const t=p.single; const sc=t.status==="running"?"running":"stopped";
-  return `<div class="tunnel-item"><div class="tunnel-left"><div class="tunnel-status ${sc}"></div><div><div class="tunnel-name">${t.service}</div></div></div></div>`;
-}
-
-const iran=p.iran; const kharej=p.kharej;
-const iranStat=iran&&iran.status==="running"; const kharejStat=kharej&&kharej.status==="running";
-let sc="stopped"; if(iranStat&&kharejStat)sc="running"; else if(iranStat||kharejStat)sc="warning";
-const tName=`${p.trans.toUpperCase()} : ${p.port}`;
-const iranSrvName=iran?iran.server_name:"Missing Iran Node";
-const kharejSrvName=kharej?kharej.server_name:"Missing Kharej Node";
-const cb=(iran&&iran.cron_active)?`<span class="cron-badge">↻ ${iran.cron_interval}m</span>`:"";
-
-let actionsHtml="";
-if(sc==="stopped"||sc==="warning"){
-  actionsHtml+=`<button class="icon-btn start" title="Start Tunnel" onclick="tunnelActionBoth('start','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">▶</button>`;
-}
-if(sc==="running"||sc==="warning"){
-  actionsHtml+=`<button class="icon-btn stop" title="Stop Tunnel" onclick="tunnelActionBoth('stop','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">⏹</button>`;
-}
-actionsHtml+=`<button class="icon-btn restart" title="Restart Tunnel" onclick="tunnelActionBoth('restart','${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">🔄</button>`;
-
-const primaryId=iran?iran.server_id:(kharej?kharej.server_id:'');
-const primarySvc=iran?iran.service:(kharej?kharej.service:'');
-actionsHtml+=`<button class="icon-btn" title="Logs (Primary)" onclick="showLogs('${primarySvc}','${primaryId}')">📄</button>`;
-actionsHtml+=`<button class="icon-btn" title="Edit Config (Primary)" onclick="showConfig('${primarySvc}','${primaryId}')">✏️</button>`;
-if(iran) actionsHtml+=`<button class="icon-btn" title="Auto Restart" onclick="showCron('${primarySvc}','${primaryId}',${iran.cron_active},'${iran.cron_interval}')">⏱</button>`;
-actionsHtml+=`<button class="icon-btn delete" title="Delete" onclick="doDeleteBoth('${p.trans}','${p.port}','${iran?iran.server_id:''}','${kharej?kharej.server_id:''}')">🗑</button>`;
-
-return `<div class="tunnel-item">
-<div class="tunnel-left">
-<div class="tunnel-status ${sc}" style="${sc==='warning'?'background:var(--warning);color:var(--warning);box-shadow:0 0 10px var(--warning);':''}"></div>
-<div>
-<div class="tunnel-name">${tName} ${cb}</div>
-<div class="tunnel-meta" style="margin-top:10px;">
-<span style="background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
-  <span class="role-badge iran" style="margin-right:6px">IRAN</span> ${iranSrvName}
-</span>
-<span style="color:var(--text-muted);font-size:16px;">⚡</span>
-<span style="background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">
-  <span class="role-badge kharej" style="margin-right:6px">KHAREJ</span> ${kharejSrvName}
-</span>
-</div>
-<div class="tunnel-meta" style="margin-top:10px;">
-<span style="color:var(--text-dark);font-size:12px;">IRAN CPU: ${iran?iran.cpu+"%":"—"} | Mem: ${iran?iran.memory:"—"}</span>
-<span style="color:var(--text-dark);font-size:12px;">KHAREJ CPU: ${kharej?kharej.cpu+"%":"—"} | Mem: ${kharej?kharej.memory:"—"}</span>
-</div>
-</div>
-</div>
-<div class="tunnel-actions">
-${actionsHtml}
-</div>
-</div>`;
-}).join("");
-list.innerHTML=html;tl.innerHTML=html;
-});
-}
-
-function selectIran(id){selectedIran=id;renderCreateWizard()}
-function selectKharej(id){selectedKharej=id;renderCreateWizard()}
-
-function wizardNext(page){
-document.querySelectorAll(".wizard-step").forEach((s,i)=>{s.classList.remove("active","done");if(i+1<page)s.classList.add("done");if(i+1===page)s.classList.add("active")});
-document.querySelectorAll(".wizard-page").forEach((p,i)=>{p.classList.remove("active");if(i+1===page)p.classList.add("active")});
-if(page===3)doCreateBoth();
-}
-
-async function doCreateBoth(){
-const iranSrv=servers.find(s=>s.id===selectedIran); const kharejSrv=servers.find(s=>s.id===selectedKharej);
-if(!iranSrv||!kharejSrv){showToast("Select both servers first","error");wizardNext(1);return}
-const iranFwd=document.getElementById("wiz-iran-port").value.trim()||"443";
-const kharejTgt=document.getElementById("wiz-kharej-port").value.trim()||"443";
-const portMapping='"'+iranFwd+'=127.0.0.1:'+kharejTgt+'"';
-const params={
-iran_server:iranSrv,kharej_server:kharejSrv,
-transport:document.getElementById("wiz-transport").value,
-port:document.getElementById("wiz-port").value,
-token:document.getElementById("wiz-token").value,
-ports:portMapping
+const api=async(path,body=null)=>{
+  const opt=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};
+  const r=await fetch(path,opt);
+  if(r.status===401){location.href='/login.html';return null;}
+  const d=await r.json();
+  if(!d.success&&d.error) throw new Error(d.error);
+  return d;
 };
-const r=await api("/api/tunnel/create-both",params);
-const ds=document.getElementById("deploy-status"); const dr=document.getElementById("deploy-result");
-ds.style.display="none";dr.style.display="block";
-if(r&&r.success){
-dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(16,185,129,0.5)">✅</div><div style="font-size:20px;font-weight:600;color:var(--success)">Tunnel Established Successfully!</div>
-<div style="margin-top:24px;text-align:left;background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:16px;padding:20px;font-size:14px">
-<div style="margin-bottom:10px"><strong>Secret Token:</strong> <span style="color:var(--primary);font-family:monospace">${r.token}</span></div>
-<div style="margin-bottom:10px"><strong>Listen Port:</strong> ${params.port}</div>
-<div style="margin-bottom:16px"><strong>Transport:</strong> ${params.transport.toUpperCase()}</div>
-<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px">
-<div><span class="role-badge iran">IRAN</span> ${r.iran?"🟢 "+r.iran.service:"🔴 Failed"}</div>
-<div><span class="role-badge kharej">KHAREJ</span> ${r.kharej?"🟢 "+r.kharej.service:"🔴 Failed"}</div>
-</div>
-</div>
-<div style="margin-top:24px"><button class="btn btn-primary" onclick="wizardNext(1)" style="width:100%">Create Another Tunnel</button></div></div>`;
-showToast("Tunnel deployed successfully!","success");refreshAll();
-}else{
-let errDetails = "";
-if(r && r.iran && r.iran.error) errDetails += `<div style="color:var(--danger);font-family:monospace;margin-top:10px;font-size:12px;text-align:left;">Iran Node: ${r.iran.error}</div>`;
-if(r && r.kharej && r.kharej.error) errDetails += `<div style="color:var(--danger);font-family:monospace;margin-top:10px;font-size:12px;text-align:left;">Kharej Node: ${r.kharej.error}</div>`;
-dr.innerHTML=`<div style="text-align:center"><div style="font-size:50px;margin-bottom:16px;text-shadow:0 0 20px rgba(239,68,68,0.5)">❌</div><div style="font-size:20px;font-weight:600;color:var(--danger)">Deployment Failed</div>
-<div style="margin-top:12px;font-size:14px;color:var(--text-muted)">Please check SSH connectivity and firewall settings.</div>
-${errDetails}
-<div style="margin-top:24px"><button class="btn btn-outline" onclick="wizardNext(1)" style="width:100%">Try Again</button></div></div>`;
-showToast("Tunnel creation failed","error");
-}
+const showToast=(msg,isErr=false)=>{
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className='show '+(isErr?'err':'succ');
+  setTimeout(()=>t.className='',3000);
+};
+
+let SERVERS=[];
+let editSvc='',editSid='';
+
+function openModal(id){document.getElementById(id).classList.add('show');}
+function closeModal(id){document.getElementById(id).classList.remove('show');}
+document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)this.classList.remove('show')}));
+
+function switchTab(id,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  ['servers','tunnels','create'].forEach(t=>document.getElementById('tab-'+t).style.display='none');
+  document.getElementById('tab-'+id).style.display='block';
+  if(id==='servers')fetchServers();
+  if(id==='tunnels')fetchTunnels();
 }
 
-async function tunnelActionBoth(action, trans, port, iranId, kharejId){
-  showToast(action.toUpperCase()+" command sent to both servers...","info");
-  const p1 = iranId ? api("/api/tunnel/action",{service:`backhaul-iran-${trans}-${port}.service`,action:action,server_id:iranId}) : Promise.resolve();
-  const p2 = kharejId ? api("/api/tunnel/action",{service:`backhaul-kharej-${trans}-${port}.service`,action:action,server_id:kharejId}) : Promise.resolve();
-  await Promise.all([p1, p2]);
-  refreshAll();
-  showToast("Action completed","success");
-}
-
-async function doDeleteBoth(trans, port, iranId, kharejId){
-  if(!confirm(`Are you sure you want to permanently delete the ${trans}:${port} tunnel from both servers?`))return;
-  showToast("Deleting tunnel from both servers...","info");
-  const p1 = iranId ? api("/api/tunnel/delete",{service:`backhaul-iran-${trans}-${port}.service`,server_id:iranId}) : Promise.resolve();
-  const p2 = kharejId ? api("/api/tunnel/delete",{service:`backhaul-kharej-${trans}-${port}.service`,server_id:kharejId}) : Promise.resolve();
-  await Promise.all([p1, p2]);
-  showToast("Tunnel deleted completely","success");
-  refreshAll();
-}
-
-async function tunnelAction(action,svc,server_id){
-showToast(action.toUpperCase()+" command sent...","info");
-await api("/api/tunnel/action",{service:svc,action:action,server_id:server_id});
-refreshAll();
-showToast("Action completed","success");
-}
-
-async function doDelete(svc,server_id){
-if(!confirm("Are you sure you want to permanently delete "+svc+"?"))return;
-await api("/api/tunnel/delete",{service:svc,server_id:server_id});
-showToast(svc+" deleted","success");refreshAll();
-}
-
-async function doPing(svc, server_id, bind_addr) {
-const targetIp = bind_addr.split(":")[0];
-if (!targetIp || targetIp === "0.0.0.0") {
-showToast("Target IP not valid for ping test.", "error"); return;
-}
-showToast("Testing connection to " + targetIp + "...", "info");
-const d = await api("/api/tunnel/ping", {server_id: server_id, target_ip: targetIp});
-if (d && d.success) {
-showToast(`Ping: ${d.avg} | Loss: ${d.loss}`, "success");
-} else {
-showToast("Ping test failed.", "error");
-}
-}
-
-async function showLogs(svc,server_id){
-document.getElementById("modal-logs").classList.add("show");
-document.getElementById("logs-content").textContent="Fetching secure logs...";
-const d=await api("/api/tunnel/logs?svc="+encodeURIComponent(svc)+"&server_id="+server_id+"&lines=200");
-if(d)document.getElementById("logs-content").textContent=d.logs||"No logs available.";
-}
-
-async function showConfig(svc,server_id){
-document.getElementById("modal-config").classList.add("show");
-currentConfigSvc=svc;currentConfigServerId=server_id;
-const d=await api("/api/tunnel/config?svc="+encodeURIComponent(svc)+"&server_id="+server_id);
-if(d)document.getElementById("config-content").value=d.config||"";
-}
-
-async function doSaveConfig(){
-showToast("Applying configuration...","info");
-await api("/api/tunnel/save_config",{service:currentConfigSvc,config:document.getElementById("config-content").value,server_id:currentConfigServerId});
-closeModal("modal-config");showToast("Config saved & service restarted","success");refreshAll();
-}
-
-function showCron(svc,server_id,active,interval){
-currentCronSvc=svc;currentCronServerId=server_id;
-document.getElementById("modal-cron").classList.add("show");
-document.getElementById("cron-svc-name").textContent=svc;
-document.getElementById("btn-remove-cron").style.display=active?"inline-block":"none";
-document.querySelectorAll(".cron-option").forEach(o=>{o.classList.toggle("active",active&&o.dataset.min===String(interval)); o.classList.toggle("btn-primary",active&&o.dataset.min===String(interval)); o.classList.toggle("btn-outline",!(active&&o.dataset.min===String(interval)))});
-}
-
-document.querySelectorAll(".cron-option").forEach(o=>{o.onclick=function(){document.querySelectorAll(".cron-option").forEach(x=>{x.classList.remove("active","btn-primary"); x.classList.add("btn-outline")});this.classList.add("active","btn-primary");this.classList.remove("btn-outline")}});
-
-async function doSetCron(){
-const a=document.querySelector(".cron-option.active");
-if(!a){showToast("Select a schedule interval","error");return}
-showToast("Applying schedule...","info");
-await api("/api/tunnel/cron",{service:currentCronSvc,interval:parseInt(a.dataset.min),action:"set",server_id:currentCronServerId});
-closeModal("modal-cron");showToast("Auto-restart schedule active","success");refreshAll();
-}
-
-async function doRemoveCron(){
-await api("/api/tunnel/cron",{service:currentCronSvc,action:"remove",server_id:currentCronServerId});
-closeModal("modal-cron");showToast("Auto-restart disabled","success");refreshAll();
-}
-
-function showAddServer(editId){
-editingServerId=editId||"";
-document.getElementById("server-modal-title").textContent=editId?"Edit Node Configuration":"Add New Server Node";
-
-// Reset progress state & show form fields
-document.getElementById("add-srv-form-fields").style.display = "block";
-document.querySelector("#modal-add-server .modal-footer").style.display = "flex";
-document.getElementById("add-srv-progress-container").style.display = "none";
-const saveBtn = document.querySelector("#modal-add-server .modal-footer .btn-primary");
-saveBtn.textContent = "Save Server";
-
-if(editId){
-const s=servers.find(x=>x.id===editId);
-if(s){document.getElementById("srv-name").value=s.name;document.getElementById("srv-ip").value=s.ip;document.getElementById("srv-role").value=s.role;document.getElementById("srv-ssh-user").value=s.ssh_user;document.getElementById("srv-ssh-port").value=s.ssh_port||22;document.getElementById("srv-ssh-password").value=s.ssh_password||"";document.getElementById("srv-ssh-key").value=s.ssh_key||""}
-}else{
-document.getElementById("srv-name").value="";document.getElementById("srv-ip").value="";document.getElementById("srv-role").value="iran";document.getElementById("srv-ssh-user").value="root";document.getElementById("srv-ssh-port").value="22";document.getElementById("srv-ssh-password").value="";document.getElementById("srv-ssh-key").value=""
-}
-document.getElementById("modal-add-server").classList.add("show");
-}
-
-function editServer(id){showAddServer(id)}
-
-async function saveServer(){
-const params={name:document.getElementById("srv-name").value,ip:document.getElementById("srv-ip").value,role:document.getElementById("srv-role").value,ssh_user:document.getElementById("srv-ssh-user").value,ssh_password:document.getElementById("srv-ssh-password").value,ssh_port:parseInt(document.getElementById("srv-ssh-port").value)||22,ssh_key:document.getElementById("srv-ssh-key").value};
-if(!params.name||!params.ip){showToast("Label and IP address are required","error");return}
-
-const fields = document.getElementById("add-srv-form-fields");
-const footer = document.querySelector("#modal-add-server .modal-footer");
-const progressContainer = document.getElementById("add-srv-progress-container");
-const statusBar = document.getElementById("add-srv-progress-bar");
-const statusText = document.getElementById("add-srv-status-text");
-const pctText = document.getElementById("add-srv-pct-text");
-const errorDetails = document.getElementById("add-srv-error-details");
-
-// Hide inputs, show progress
-fields.style.display = "none";
-footer.style.display = "none";
-progressContainer.style.display = "block";
-errorDetails.style.display = "none";
-statusBar.style.background = "linear-gradient(90deg, var(--primary), var(--secondary))";
-statusBar.style.width = "0%";
-
-// Fake progressive steps
-let progress = 0;
-statusText.textContent = "Connecting to remote server...";
-pctText.textContent = "0%";
-
-const interval = setInterval(() => {
-    if (progress < 85) {
-        progress += Math.floor(Math.random() * 10) + 2;
-        if (progress > 85) progress = 85;
-        statusBar.style.width = progress + "%";
-        pctText.textContent = progress + "%";
-        
-        if (progress > 20 && progress <= 45) {
-            statusText.textContent = "Initiating SSH handshake...";
-        } else if (progress > 45 && progress <= 70) {
-            statusText.textContent = "Authenticating credentials...";
-        } else if (progress > 70) {
-            statusText.textContent = "Verifying environment and host tools...";
-        }
-    }
-}, 300);
-
-let test;
-try {
-    test = await api("/api/server/test", {ip:params.ip, ssh_user:params.ssh_user, ssh_password:params.ssh_password, ssh_port:params.ssh_port, ssh_key:params.ssh_key});
-} catch(e) {
-    test = { success: false, output: String(e) };
-}
-
-clearInterval(interval);
-
-if (test && test.success) {
-    statusBar.style.width = "100%";
-    pctText.textContent = "100%";
-    statusBar.style.background = "var(--success)";
-    statusText.textContent = "Connection Verified! Saving configuration...";
+async function fetchServers(){
+  try{
+    const d=await api('/api/servers');
+    SERVERS=d.servers;
+    const g=document.getElementById('serversGrid');
+    g.innerHTML='';
+    const s1=document.getElementById('cb-iran'),s2=document.getElementById('cb-kharej');
+    s1.innerHTML='';s2.innerHTML='';
     
-    // Perform save
-    if (editingServerId) {
-        params.id = editingServerId;
-        await api("/api/server/update", params);
-    } else {
-        await api("/api/server/add", params);
-    }
+    SERVERS.forEach(s=>{
+      if(s.role==='iran') s1.innerHTML+=`<option value="${s.id}">${s.name} (${s.ip})</option>`;
+      else s2.innerHTML+=`<option value="${s.id}">${s.name} (${s.ip})</option>`;
+      
+      const badge=s.role==='iran'?'<span class="badge b-iran">IRAN</span>':'<span class="badge b-kharej">KHAREJ</span>';
+      const stat=s.ssh_ok?'<span style="color:var(--succ);font-size:12px">● Online</span>':'<span style="color:var(--err);font-size:12px">● Offline</span>';
+      
+      g.innerHTML+=`
+        <div class="card">
+          <div class="srv-head">
+            <div class="srv-name">${s.name} ${badge}</div>
+            ${stat}
+          </div>
+          <div style="font-size:12px;color:var(--mut);margin-bottom:16px;font-family:monospace">${s.ip}</div>
+          <div class="srv-stats">
+            <div class="stat"><span>CPU Load</span><b>${s.load||'-'}</b></div>
+            <div class="stat"><span>Memory</span><b>${s.memory||'-'}</b></div>
+            <div class="stat"><span>Binary</span><b>${s.version||'-'}</b></div>
+            <div class="stat"><span>Uptime</span><b>${s.uptime||'-'}</b></div>
+          </div>
+          <div class="srv-actions">
+            <button class="btn" onclick="installBin('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Install Bin</button>
+            <button class="btn btn-danger" onclick="delServer('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        </div>
+      `;
+    });
+  }catch(e){showToast(e.message,true)}
+}
+
+async function addServer(e){
+  e.preventDefault();
+  const b={
+    name:document.getElementById('as-name').value,
+    ip:document.getElementById('as-ip').value,
+    role:document.getElementById('as-role').value,
+    ssh_user:document.getElementById('as-user').value,
+    ssh_port:document.getElementById('as-port').value,
+    ssh_password:document.getElementById('as-pass').value,
+    ssh_key:document.getElementById('as-key').value
+  };
+  try{
+    await api('/api/server/add',b);
+    closeModal('m-add-server');
+    showToast('Server added successfully');
+    fetchServers();
+  }catch(ex){showToast(ex.message,true)}
+}
+
+async function delServer(id){
+  if(!confirm('Delete this server?'))return;
+  try{
+    await api('/api/server/delete',{id});
+    showToast('Server deleted');
+    fetchServers();
+  }catch(e){showToast(e.message,true)}
+}
+
+async function installBin(id){
+  if(!confirm('Install/Update Backhaul binary on this server?'))return;
+  showToast('Installing binary... please wait');
+  try{
+    const r=await api('/api/install/binary',{server_id:id});
+    showToast(`Binary installed: ${r.version}`);
+    fetchServers();
+  }catch(e){showToast(e.message,true)}
+}
+
+async function fetchTunnels(){
+  try{
+    const d=await api('/api/tunnels');
+    const g=document.getElementById('tunnelsGrid');
+    g.innerHTML='';
+    if(!d.tunnels.length) g.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--mut);padding:40px">No active tunnels found.</div>';
     
-    setTimeout(() => {
-        // Reset modal layout
-        progressContainer.style.display = "none";
-        fields.style.display = "block";
-        footer.style.display = "flex";
-        closeModal("modal-add-server");
-        showToast("Server configuration saved", "success");
-        loadServers();
-    }, 1000);
-} else {
-    statusBar.style.width = "100%";
-    pctText.textContent = "Failed";
-    statusBar.style.background = "var(--danger)";
-    statusText.textContent = "Verification Failed!";
-    
-    let errMsg = "Connection failed. Please check IP, port, and credentials.";
-    if (test && test.output) {
-        errMsg += `<br><span style="font-size:11px; opacity:0.8;">Details: ${test.output}</span>`;
-    }
-    errorDetails.innerHTML = errMsg;
-    errorDetails.style.display = "block";
-    
-    // Show footer and let them try again
-    footer.style.display = "flex";
-    const saveBtn = footer.querySelector(".btn-primary");
-    saveBtn.textContent = "Retry & Save";
-    fields.style.display = "block";
-}
+    d.tunnels.forEach(t=>{
+      const cClass=t.status==='running'?'running':'stopped';
+      g.innerHTML+=`
+        <div class="card tun-card ${cClass}">
+          <div class="tun-head">
+            <div class="tun-title">${t.server_name} <span style="color:var(--mut)">→</span> ${t.service.replace('backhaul-','').replace('.service','')}</div>
+            <div class="tun-status"><div class="dot"></div>${t.status.toUpperCase()}</div>
+          </div>
+          <div class="tun-info">
+            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${t.uptime}</div>
+            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> ${t.cpu} CPU</div>
+            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> ${t.memory} RAM</div>
+            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M7 3.34V5a3 3 0 0 0 3 3v0a2 2 0 0 1 2 2v0c0 1.1.9 2 2 2v0a2 2 0 0 0 2-2v0c0-1.1.9-2 2-2h3.17M11 21.95V18a2 2 0 0 0-2-2v0a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/><circle cx="12" cy="12" r="10"/></svg> ${t.transport.toUpperCase()}</div>
+          </div>
+          <div class="srv-actions">
+            <button class="btn" onclick="tunAction('${t.service}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+            <button class="btn" onclick="tunAction('${t.service}','${t.server_id}','stop')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg></button>
+            <button class="btn" onclick="showLogs('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/></svg></button>
+            <button class="btn" onclick="editConf('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+            <button class="btn btn-danger" onclick="delTun('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        </div>
+      `;
+    });
+  }catch(e){showToast(e.message,true)}
 }
 
-async function deleteServer(id,name){
-if(!confirm("Are you sure you want to remove "+name+" from the panel?"))return;
-await api("/api/server/delete",{id:id});
-showToast("Server removed","success");loadServers();
+async function tunAction(svc,sid,act){
+  try{
+    await api('/api/tunnel/action',{service:svc,server_id:sid,action:act});
+    showToast(`Tunnel ${act}ed`);
+    fetchTunnels();
+  }catch(e){showToast(e.message,true)}
 }
 
-async function installBinary(server_id){
-if(!confirm("Deploy the latest Backhaul binary to this node?"))return;
-showToast("Downloading and installing...","info");
-const r=await api("/api/install/binary",{server_id:server_id});
-if(r&&r.success){
-    let msg = "Successfully deployed: "+r.version;
-    if(r.used_mirror) {
-        msg += " (via Mirror fallback)";
-    }
-    showToast(msg,"success");
-    loadServers();
-}
-else{showToast("Installation failed: "+(r?r.error||"Unknown error":"Connection failed"),"error")}
+async function delTun(svc,sid){
+  if(!confirm('Permanently delete this tunnel?'))return;
+  try{
+    await api('/api/tunnel/delete',{service:svc,server_id:sid});
+    showToast('Tunnel deleted');
+    fetchTunnels();
+  }catch(e){showToast(e.message,true)}
 }
 
-async function loadCurrentSettings(){
-const r=await api("/api/settings/get");
-if(r&&r.username){document.getElementById("set-username").value=r.username;document.getElementById("set-password").value="";}
+async function showLogs(svc,sid){
+  document.getElementById('term-title').textContent=`Logs: ${svc}`;
+  document.getElementById('term-out').textContent='Loading logs...';
+  openModal('m-term');
+  try{
+    const r=await api(`/api/tunnel/logs?svc=${svc}&server_id=${sid}`);
+    document.getElementById('term-out').textContent=r.logs||'No logs found.';
+    document.getElementById('term-out').scrollTop=document.getElementById('term-out').scrollHeight;
+  }catch(e){document.getElementById('term-out').textContent='Error: '+e.message}
 }
 
-async function updateSettings(){
-const u=document.getElementById("set-username").value; const p=document.getElementById("set-password").value;
-if(!u||!p){showToast("Username and new password are required","error");return;}
-showToast("Updating credentials...","info");
-const r=await api("/api/settings/update",{username:u,password:p});
-if(r&&r.success){showToast("Credentials updated successfully","success");document.getElementById("set-password").value="";}
-else{showToast("Failed to update credentials","error")}
+async function editConf(svc,sid){
+  editSvc=svc;editSid=sid;
+  document.getElementById('edit-title').textContent=`Config: ${svc}`;
+  document.getElementById('edit-text').value='Loading...';
+  openModal('m-edit');
+  try{
+    const r=await api(`/api/tunnel/config?svc=${svc}&server_id=${sid}`);
+    document.getElementById('edit-text').value=r.config||'';
+  }catch(e){document.getElementById('edit-text').value='Error: '+e.message}
 }
 
-function refreshAll(){loadServers();renderDashboardTunnels()}
+async function saveConfig(){
+  try{
+    await api('/api/tunnel/save_config',{service:editSvc,server_id:editSid,config:document.getElementById('edit-text').value});
+    closeModal('m-edit');
+    showToast('Config saved and tunnel restarted');
+    fetchTunnels();
+  }catch(e){showToast(e.message,true)}
+}
 
-loadServers();
-setInterval(()=>{loadServers();renderDashboardTunnels()},15000);
+async function createBothTunnel(e){
+  e.preventDefault();
+  const btn=document.getElementById('cb-btn');
+  btn.disabled=true;btn.textContent='Creating...';
+  try{
+    const b={
+      iran_server:{id:document.getElementById('cb-iran').value},
+      kharej_server:{id:document.getElementById('cb-kharej').value},
+      transport:document.getElementById('cb-trans').value,
+      port:document.getElementById('cb-port').value,
+      ports:document.getElementById('cb-ports').value,
+      token:document.getElementById('cb-token').value
+    };
+    await api('/api/tunnel/create-both',b);
+    showToast('Tunnel created successfully on both servers!');
+    document.getElementById('createBothForm').reset();
+    switchTab('tunnels',document.querySelectorAll('.tab')[1]);
+  }catch(ex){showToast(ex.message,true)}
+  finally{btn.disabled=false;btn.textContent='Create & Connect Tunnel';}
+}
 
-document.querySelectorAll(".modal-overlay").forEach(m=>{m.addEventListener("click",function(e){if(e.target===this)this.classList.remove("show")})});
+async function saveSettings(e){
+  e.preventDefault();
+  try{
+    await api('/api/settings/update',{username:document.getElementById('set-u').value,password:document.getElementById('set-p').value});
+    closeModal('m-settings');
+    showToast('Settings updated. Please login again.');
+    setTimeout(()=>location.reload(),1000);
+  }catch(ex){showToast(ex.message,true)}
+}
+
+async function logout(){
+  try{await api('/api/auth/logout',{});location.href='/login.html'}catch(e){}
+}
+
+// Init
+api('/api/settings/get').then(d=>{if(d&&d.username)document.getElementById('set-u').value=d.username});
+fetchServers();
 </script>
 </body>
-</html>"""
-
+</html>
+"""
 
 if __name__ == "__main__":
     os.makedirs(INSTALL_DIR, exist_ok=True)
