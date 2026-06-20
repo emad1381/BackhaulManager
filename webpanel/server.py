@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.9.0 (security-hardened + performance presets)
+Version: 2.9.1 (security-hardened + presets + UI polish)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1633,16 +1633,17 @@ html[data-theme="light"]{
   --shadow:0 30px 70px -24px rgba(40,60,120,.40);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-gutter:stable}
 body{
   font-family:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
-  min-height:100vh;display:grid;place-items:center;padding:20px;
-  color:var(--text);background:var(--bg);position:relative;overflow:hidden;
+  min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:20px;
+  color:var(--text);background:var(--bg);position:relative;overflow-x:hidden;overflow-y:auto;
 }
-.aurora{position:fixed;inset:-30%;z-index:0;filter:blur(90px);opacity:.85;pointer-events:none}
+.aurora{position:fixed;inset:-20%;z-index:0;filter:blur(70px);opacity:.7;pointer-events:none;will-change:auto}
 .aurora i{position:absolute;display:block;border-radius:50%;mix-blend-mode:screen}
-.aurora .b1{width:46vw;height:46vw;left:-6vw;top:-6vw;background:radial-gradient(circle,#22d3ee,transparent 60%);animation:float1 16s ease-in-out infinite}
-.aurora .b2{width:42vw;height:42vw;right:-8vw;top:6vw;background:radial-gradient(circle,#6366f1,transparent 60%);animation:float2 19s ease-in-out infinite}
-.aurora .b3{width:40vw;height:40vw;left:24vw;bottom:-14vw;background:radial-gradient(circle,#2dd4bf,transparent 60%);animation:float3 22s ease-in-out infinite}
+.aurora .b1{width:40vw;height:40vw;left:-6vw;top:-6vw;background:radial-gradient(circle,#22d3ee,transparent 60%)}
+.aurora .b2{width:38vw;height:38vw;right:-8vw;top:6vw;background:radial-gradient(circle,#6366f1,transparent 60%)}
+.aurora .b3{width:36vw;height:36vw;left:24vw;bottom:-14vw;background:radial-gradient(circle,#2dd4bf,transparent 60%)}
 html[data-theme="light"] .aurora{opacity:.5}
 @keyframes float1{50%{transform:translate(6vw,4vh) scale(1.1)}}
 @keyframes float2{50%{transform:translate(-5vw,5vh) scale(1.08)}}
@@ -1650,11 +1651,12 @@ html[data-theme="light"] .aurora{opacity:.5}
 .card{
   position:relative;z-index:1;width:100%;max-width:410px;
   background:var(--glass);border:1px solid var(--glass-brd);border-radius:24px;
-  backdrop-filter:blur(26px) saturate(160%);-webkit-backdrop-filter:blur(26px) saturate(160%);
+  backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);
   box-shadow:var(--shadow);padding:40px 34px;
-  animation:rise .6s cubic-bezier(.2,.8,.2,1) both;
+  animation:fadein .35s ease both;
 }
-@keyframes rise{from{opacity:0;transform:translateY(18px) scale(.98)}}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion: reduce){.card{animation:none}}
 .brand{display:flex;flex-direction:column;align-items:center;gap:16px;margin-bottom:26px;text-align:center}
 .logo{
   width:64px;height:64px;border-radius:20px;display:grid;place-items:center;
@@ -1804,12 +1806,13 @@ html[data-theme="light"]{
   --shadow:0 24px 50px -24px rgba(40,60,120,.35);
 }
 *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-body{background:var(--bg);color:var(--text);min-height:100vh;transition:background .25s,color .25s}
-.aurora{position:fixed;inset:-25%;z-index:0;filter:blur(100px);opacity:.6;pointer-events:none}
+html{scrollbar-gutter:stable}
+body{background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh;transition:background .25s,color .25s}
+.aurora{position:fixed;inset:-18%;z-index:0;filter:blur(72px);opacity:.55;pointer-events:none}
 .aurora i{position:absolute;display:block;border-radius:50%;mix-blend-mode:screen}
-.aurora .b1{width:42vw;height:42vw;left:-5vw;top:-8vw;background:radial-gradient(circle,#22d3ee,transparent 62%);animation:fl1 18s ease-in-out infinite}
-.aurora .b2{width:38vw;height:38vw;right:-6vw;top:0;background:radial-gradient(circle,#6366f1,transparent 62%);animation:fl2 21s ease-in-out infinite}
-.aurora .b3{width:36vw;height:36vw;left:30vw;bottom:-16vw;background:radial-gradient(circle,#2dd4bf,transparent 62%);animation:fl3 24s ease-in-out infinite}
+.aurora .b1{width:38vw;height:38vw;left:-5vw;top:-8vw;background:radial-gradient(circle,#22d3ee,transparent 62%)}
+.aurora .b2{width:34vw;height:34vw;right:-6vw;top:0;background:radial-gradient(circle,#6366f1,transparent 62%)}
+.aurora .b3{width:32vw;height:32vw;left:30vw;bottom:-16vw;background:radial-gradient(circle,#2dd4bf,transparent 62%)}
 html[data-theme="light"] .aurora{opacity:.4}
 @keyframes fl1{50%{transform:translate(5vw,4vh) scale(1.1)}}
 @keyframes fl2{50%{transform:translate(-4vw,5vh) scale(1.08)}}
@@ -2443,7 +2446,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.9.0")
+    print("  BackhaulManager Web Panel v2.9.1")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")
