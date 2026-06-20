@@ -2012,8 +2012,8 @@ textarea.code:focus{border-color:var(--acc)}
   </div>
 
   <div id="tab-create" style="display:none">
-    <div class="header"><h2>Create Matching Tunnel (Iran ⇄ Kharej)</h2></div>
-    <div class="card" style="max-width:760px;box-shadow:var(--shadow)">
+    <div class="header" style="justify-content:center;text-align:center"><h2>Create Matching Tunnel (Iran ⇄ Kharej)</h2></div>
+    <div class="card" style="max-width:760px;margin:0 auto;box-shadow:var(--shadow)">
       <form id="createBothForm" onsubmit="createBothTunnel(event)">
         <div class="row2">
           <div class="field"><label>Iran Server (entry)</label><select id="cb-iran" required></select></div>
