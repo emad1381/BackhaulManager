@@ -2602,7 +2602,7 @@ menu_webpanel() {
     echo -e "  ${WHITE}[1]${NC} ${LGREEN}Start${NC} Web Panel"
     echo -e "  ${WHITE}[2]${NC} ${RED}Stop${NC}  Web Panel"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Start${NC} on boot (systemd service)"
-    echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel (Auto-restart if running)"
+    echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel ${DIM}(auto-starts when done)${NC}"
     echo -e "  ${WHITE}[5]${NC} ${LCYAN}Restart${NC} Web Panel"
     echo -e "  ${WHITE}[6]${NC} ${RED}Uninstall${NC} Web Panel"
     echo -e "  ${WHITE}[7]${NC} ${LMAGENTA}Configure${NC} (port / HTTPS / domain / password)"
@@ -2798,26 +2798,40 @@ SERVICE
                 echo -e "  ${BULLET} Port    : ${CYAN}$WEBPANEL_PORT${NC}"
                 echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
 
-                # If Web Panel was already running, restart it to apply changes
-                if [[ -n "$running_pid" ]] || systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
-                    info "Web Panel was running. Restarting to apply updates..."
-                    pkill -9 -f "python3.*server\.py" 2>/dev/null
-                    fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+                # Auto-start the panel right after install/update so the user
+                # never has to run [1] Start manually.
+                info "Starting Web Panel automatically..."
+                pkill -9 -f "python3.*server\.py" 2>/dev/null
+                fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+                sleep 2
+                if ! command -v python3 &>/dev/null; then
+                    warn "python3 not found. Install python3, then start with option [1]."
+                elif systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
+                    # A boot service exists (option 3) -> use systemd.
+                    systemctl restart backhaul-webpanel
                     sleep 2
-                    if systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
-                        systemctl restart backhaul-webpanel
-                        sleep 2
-                        if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
-                            success "Web Panel restarted and updated via systemd!"
-                        fi
+                    if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
+                        success "Web Panel is up and running (systemd)!"
                     else
-                        nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
-                        sleep 3
-                        if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
-                            success "Web Panel restarted and updated!"
-                        fi
+                        warn "Failed to start via systemd. Check: journalctl -u backhaul-webpanel"
+                    fi
+                else
+                    # Fresh manual start.
+                    mkdir -p "$INSTALL_DIR" "$WEBPANEL_DIR"
+                    nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
+                    sleep 4
+                    if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
+                        success "Web Panel is up and running!"
+                        echo ""
+                        echo -e "  ${BOLD}${LGREEN}  Web Panel is LIVE!${NC}"
+                    else
+                        warn "Failed to start Web Panel. Check logs:"
+                        tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null
                     fi
                 fi
+                echo ""
+                echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
             else
                 warn "Download failed. Please check your internet connection."
             fi
