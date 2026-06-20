@@ -2005,18 +2005,54 @@ _cron_get_interval() {
     fi
 }
 
+# Translate an interval in MINUTES into a VALID 5-field cron time spec.
+# The cron minute field only accepts 0-59, so the old "*/${interval}" form
+# silently broke for every value >= 60 (1h / 2h / 6h and most custom values):
+# crontab rejected the line and no job was installed.
+_cron_build_expr() {
+    local m="$1"
+    [[ "$m" =~ ^[0-9]+$ ]] || { echo ""; return; }
+    if (( m < 1 )); then echo ""; return; fi
+    if (( m < 60 )); then echo "*/${m} * * * *"; return; fi
+    if (( m % 60 == 0 )); then
+        local h=$(( m / 60 ))
+        if (( h >= 24 )); then echo "0 0 * * *"; else echo "0 */${h} * * *"; fi
+        return
+    fi
+    # non-hour multiple > 60: snap to the nearest whole hour on :00
+    local h=$(( (m + 30) / 60 )); (( h < 1 )) && h=1
+    if (( h >= 24 )); then echo "0 0 * * *"; else echo "0 */${h} * * *"; fi
+}
+
 _cron_install() {
     local svc="$1" interval_min="$2"
     local conf; conf=$(_cron_get_config_path "$svc")
 
-    mkdir -p "$CRON_CONFIG_DIR"
-    cat > "$conf" <<EOF
+    local cron_expr; cron_expr=$(_cron_build_expr "$interval_min")
+    if [[ -z "$cron_expr" ]]; then
+        warn "Invalid interval: $interval_min"
+        return 1
+    fi
+
+    local cron_line="${cron_expr} systemctl restart ${svc} ${CRON_MARKER} ${svc}"
+    local tmpf; tmpf=$(mktemp)
+    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc"; echo "$cron_line") > "$tmpf"
+
+    # Only persist the .conf marker if the crontab actually loads, so a rejected
+    # line never leaves a "scheduled" record with no job behind it.
+    if crontab "$tmpf"; then
+        mkdir -p "$CRON_CONFIG_DIR"
+        cat > "$conf" <<EOF
 SERVICE=$svc
 INTERVAL=$interval_min
+SCHEDULE=$cron_expr
 EOF
-
-    local cron_line="*/${interval_min} * * * * systemctl restart ${svc} ${CRON_MARKER} ${svc}"
-    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc"; echo "$cron_line") | crontab -
+        rm -f "$tmpf"
+        return 0
+    fi
+    rm -f "$tmpf"
+    warn "Failed to install cron job for $svc"
+    return 1
 }
 
 _cron_remove() {
@@ -2090,10 +2126,14 @@ menu_auto_restart() {
         warn "The tunnel will briefly disconnect during restart."
         prompt "Continue? [Y/n]:"; read -r confirm
         if [[ "${confirm,,}" != "n" ]]; then
-            _cron_install "$svc" "$interval_min"
-            success "Auto-restart enabled: every ${interval_min} minute(s)"
-            echo -e "  ${DIM}Cron job: systemctl restart $svc${NC}"
-            echo -e "  ${DIM}Config: $(_cron_get_config_path "$svc")${NC}"
+            if _cron_install "$svc" "$interval_min"; then
+                local applied; applied=$(_cron_build_expr "$interval_min")
+                success "Auto-restart enabled: every ${interval_min} minute(s)"
+                echo -e "  ${DIM}Cron schedule: ${applied}  (systemctl restart $svc)${NC}"
+                echo -e "  ${DIM}Config: $(_cron_get_config_path "$svc")${NC}"
+            else
+                warn "Could not enable auto-restart. No changes were made."
+            fi
         else
             info "Cancelled."
         fi

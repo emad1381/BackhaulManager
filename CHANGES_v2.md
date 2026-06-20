@@ -1,6 +1,27 @@
 # BackhaulManager — Security Hardening & Performance Presets
 
-Panel `v2.9.0` · Script `v1.6.0`
+Panel `v2.9.3` · Script `v1.6.1`
+
+## 🐞 Auto-restart & preset fixes (v2.9.3 / script v1.6.1)
+1. **Cron interval bug fixed (critical)** — auto-restart used `*/N * * * *`, but
+   the cron *minute* field only accepts 0-59. Every interval ≥ 60 min (1h / 2h /
+   6h and most custom values) produced an invalid line that `crontab` rejected,
+   so **no job was installed** even though the dashboard still showed the tunnel
+   as "scheduled". Intervals are now translated to a valid expression:
+   `<60` → `*/N * * * *`, exact hours → `0 */H * * *`, 24h → `0 0 * * *`,
+   other values snap to the nearest whole hour. Same fix in panel and script.
+2. **No more phantom schedules** — the `.conf` marker (and the dashboard badge)
+   is written **only after** the crontab actually loads. A failed install now
+   reports an error instead of silently showing an inactive "schedule".
+3. **Schedule persists & stays editable** — the per-tunnel clock button always
+   reopens the modal showing the current interval; change it or press *Disable*
+   to remove. Nothing is auto-deleted.
+4. **Preset ↔ transport decoupled** — a preset is a *tuning profile* and now
+   works with **any** transport. Selecting a preset still pre-fills its
+   recommended transport, but changing the transport manually no longer leaves a
+   misleading "best transport: WSSMUX" next to a TCP choice — the info box shows
+   `Transport: TCP (your choice) · recommended: WSSMUX`. The generated TOML was
+   already transport-correct (mux fields only for mux transports).
 
 ## 🔒 Security fixes (web panel)
 1. **SSH command injection fixed** — the `sudo` password path now uses `shlex.quote`

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.9.2 (hardened + presets + UI polish + cron UI)
+Version: 2.9.3 (cron interval fix + preset/transport decoupling)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -303,6 +303,34 @@ def get_preset(name, role):
     if not p:
         return None
     return dict(p.get("iran" if role == "iran" else "kharej", {}))
+
+def build_cron_expr(minutes):
+    """Translate an interval in *minutes* into a VALID 5-field cron time spec.
+
+    The cron minute field only accepts 0-59, so the old ``*/{minutes}`` form
+    silently broke for every interval >= 60 (1h / 2h / 6h and most custom
+    values): the line was rejected by crontab, so the job was never installed
+    even though the dashboard still showed it as "scheduled". This builds a
+    proper expression instead:
+        < 60 min            -> every N minutes      ("*/N * * * *")
+        exact hour multiple -> every H hours on :00 ("0 */H * * *")
+        24h (1440) or more  -> once a day at 00:00  ("0 0 * * *")
+        other > 60 values   -> snapped to the nearest whole hour on :00
+    Returns None for non-positive intervals.
+    """
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        return None
+    if m < 1:
+        return None
+    if m < 60:
+        return f"*/{m} * * * *"
+    if m % 60 == 0:
+        h = m // 60
+        return "0 0 * * *" if h >= 24 else f"0 */{h} * * *"
+    h = max(1, round(m / 60))
+    return "0 0 * * *" if h >= 24 else f"0 */{h} * * *"
 
 def invalidate_cache(server_id=None):
     if server_id:
@@ -1521,8 +1549,26 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 remote_exec(srv, f"rm -f {CRON_CONFIG_DIR}/{svc}.conf")
                 invalidate_cache(server_id)
             elif interval > 0:
-                remote_exec(srv, f"bash -c \"mkdir -p {CRON_CONFIG_DIR} && echo -e 'SERVICE={svc}\\nINTERVAL={interval}' > {CRON_CONFIG_DIR}/{svc}.conf\"")
-                remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > /tmp/cron_tmp; echo '*/{interval} * * * * systemctl restart {svc} {CRON_MARKER} {svc}' >> /tmp/cron_tmp; crontab /tmp/cron_tmp; rm -f /tmp/cron_tmp\"")
+                expr = build_cron_expr(interval)
+                if not expr:
+                    self.send_json({"error": "invalid interval"}, 400)
+                    return
+                # Install the cron job FIRST, and only write the .conf marker if
+                # the crontab actually loaded. An invalid line used to leave a
+                # phantom "scheduled" badge in the dashboard while no job ran.
+                tmpf = f"/tmp/bhm_cron_{svc}.tmp"
+                cron_cmd = (
+                    f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > {tmpf}; "
+                    f"echo '{expr} systemctl restart {svc} {CRON_MARKER} {svc}' >> {tmpf}; "
+                    f"if crontab {tmpf}; then mkdir -p {CRON_CONFIG_DIR} && "
+                    f"printf 'SERVICE={svc}\\nINTERVAL={interval}\\nSCHEDULE={expr}\\n' > {CRON_CONFIG_DIR}/{svc}.conf; "
+                    f"echo CRON_OK; else echo CRON_FAIL; fi; rm -f {tmpf}\""
+                )
+                out, _ = remote_exec(srv, cron_cmd)
+                invalidate_cache(server_id)
+                if "CRON_OK" not in (out or ""):
+                    self.send_json({"error": "failed to install cron job", "output": out}, 500)
+                    return
             invalidate_cache(server_id)
             self.send_json({"success": True})
             return
@@ -2021,7 +2067,7 @@ textarea.code:focus{border-color:var(--acc)}
           <div class="field"><label>Kharej Server (exit)</label><select id="cb-kharej" required></select></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Transport</label><select id="cb-trans"><option value="wssmux">WSSMUX (recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
+          <div class="field"><label>Transport</label><select id="cb-trans" onchange="onTransportChange()"><option value="wssmux">WSSMUX (recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
           <div class="field"><label>Tunnel Port</label><input id="cb-port" type="number" value="9743" required></div>
         </div>
         <div class="field">
@@ -2128,6 +2174,10 @@ textarea.code:focus{border-color:var(--acc)}
       </div>
       <div class="field" id="cron-custom-wrap" style="display:none"><label>Custom interval (minutes, 1-1440)</label>
         <input id="cron-custom" type="number" min="1" max="1440" placeholder="e.g. 10"></div>
+      <p style="color:var(--mut);font-size:12px;line-height:1.6;margin-top:4px">
+        Set this on <b>one side only</b> (Iran or Kharej) \u2014 restarting either end refreshes the whole tunnel.
+        Intervals under an hour run every N minutes; 1h/2h/6h (or custom values \u2265 60) run on the hour.
+        The schedule is saved and stays editable here until you press <b>Disable</b>.</p>
     </div>
     <div class="m-foot">
       <button class="btn btn-danger" onclick="removeCron()">Disable</button>
@@ -2418,6 +2468,23 @@ function rankBar(lbl,v){
   return '<div class="bar-item"><div class="bar-lbl"><span>'+lbl+'</span><span>'+v+'/5</span></div>'+
     '<div class="bar-track"><div class="bar-fill" style="width:'+(v*20)+'%"></div></div></div>';
 }
+function renderPresetInfo(){
+  const k=$('cb-preset').value,info=$('preset-info');
+  const p=PRESETS[k];if(!p){info.classList.remove('show');return;}
+  const sel=$('cb-trans').value,best=(p.best_transport||'');
+  let tline;
+  if(best&&sel!==best){
+    // The preset is a TUNING profile and works with ANY transport. When the
+    // user overrides the recommended transport we say so plainly instead of
+    // leaving a misleading "best transport" claim next to a different choice.
+    tline='<div class="pi-best">Transport: <b>'+sel.toUpperCase()+'</b> (your choice) \u00b7 recommended for this preset: <b>'+best.toUpperCase()+'</b>.<br><span style="color:var(--mut)">The preset only sets performance values \u2014 it applies on top of whichever transport you pick.</span></div>';
+  }else{
+    tline='<div class="pi-best">Best transport for this preset: <b>'+best.toUpperCase()+'</b></div>';
+  }
+  info.innerHTML='<div class="pi-desc">'+p.desc+'</div>'+tline+
+    '<div class="bars">'+rankBar('Speed',p.rank_speed)+rankBar('Stability',p.rank_stability)+rankBar('Low latency',p.rank_latency)+'</div>';
+  info.classList.add('show');
+}
 function onPresetChange(){
   const k=$('cb-preset').value,info=$('preset-info'),cbox=$('custom-box');
   if(k==='custom'){
@@ -2426,11 +2493,15 @@ function onPresetChange(){
   }
   cbox.style.display='none';
   const p=PRESETS[k];if(!p){info.classList.remove('show');return;}
+  // Picking a preset pre-fills its recommended transport for convenience, but
+  // the two are independent: the user can freely change the transport after.
   if(p.best_transport)$('cb-trans').value=p.best_transport;
-  info.innerHTML='<div class="pi-desc">'+p.desc+'</div>'+
-    '<div class="pi-best">Best transport for this preset: <b>'+(p.best_transport||'').toUpperCase()+'</b></div>'+
-    '<div class="bars">'+rankBar('Speed',p.rank_speed)+rankBar('Stability',p.rank_stability)+rankBar('Low latency',p.rank_latency)+'</div>';
-  info.classList.add('show');
+  renderPresetInfo();
+}
+function onTransportChange(){
+  // Keep the preset selected (its tuning still applies) and just refresh the
+  // info box so a manual transport change no longer looks like a conflict.
+  if($('cb-preset').value!=='custom')renderPresetInfo();
 }
 function fieldHtml(side,key,val){
   const tip=(PHELP[key]||'').replace(/"/g,'&quot;');
