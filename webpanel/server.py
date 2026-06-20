@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.8.0
+Version: 2.9.0 (security-hardened + performance presets)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -21,6 +21,9 @@ import socket
 import ssl
 import hashlib
 import hmac
+import shlex
+import threading
+import re as _re
 
 PORT = 54321
 ADMIN_USER = "admin"
@@ -101,7 +104,69 @@ def check_credentials(username, password):
     # Legacy / first-run fallback (plaintext or built-in default).
     return hmac.compare_digest(password, settings.get("admin_pass", ADMIN_PASS))
 
+
+def is_default_credentials():
+    """True while the panel is still using the built-in admin/admin login."""
+    settings = load_settings()
+    if settings.get("admin_pass_hash"):
+        return False
+    return (settings.get("admin_user", ADMIN_USER) == ADMIN_USER and
+            settings.get("admin_pass", ADMIN_PASS) == ADMIN_PASS)
+
+
 sessions = {}
+_SESSION_LOCK = threading.Lock()
+MAX_SESSIONS = 50
+
+# ----- Brute-force protection -----------------------------------------------
+# Per-IP sliding window: after MAX_FAILS failures within FAIL_WINDOW seconds the
+# IP is locked out for LOCKOUT seconds. Successful login clears the counter.
+_login_fails = {}          # ip -> [timestamps]
+_login_lock_until = {}     # ip -> epoch when lockout ends
+_LOGIN_LOCK = threading.Lock()
+MAX_FAILS = 5
+FAIL_WINDOW = 300
+LOCKOUT = 300
+
+
+def login_locked(ip):
+    with _LOGIN_LOCK:
+        until = _login_lock_until.get(ip, 0)
+        if until and time.time() < until:
+            return int(until - time.time())
+    return 0
+
+
+def record_login_fail(ip):
+    now = time.time()
+    with _LOGIN_LOCK:
+        fails = [t for t in _login_fails.get(ip, []) if now - t < FAIL_WINDOW]
+        fails.append(now)
+        _login_fails[ip] = fails
+        if len(fails) >= MAX_FAILS:
+            _login_lock_until[ip] = now + LOCKOUT
+            _login_fails[ip] = []
+
+
+def record_login_ok(ip):
+    with _LOGIN_LOCK:
+        _login_fails.pop(ip, None)
+        _login_lock_until.pop(ip, None)
+
+
+def new_session(user):
+    """Create a session id, enforcing a global cap and pruning expired ones."""
+    sid = secrets.token_hex(32)
+    now = time.time()
+    with _SESSION_LOCK:
+        for k in [k for k, v in sessions.items() if now - v.get("time", 0) > SESSION_TTL]:
+            sessions.pop(k, None)
+        if len(sessions) >= MAX_SESSIONS:
+            oldest = sorted(sessions.items(), key=lambda kv: kv[1].get("time", 0))
+            for k, _ in oldest[:len(sessions) - MAX_SESSIONS + 1]:
+                sessions.pop(k, None)
+        sessions[sid] = {"user": user, "time": now}
+    return sid
 
 def run_cmd(cmd, timeout=30):
     try:
@@ -128,6 +193,117 @@ _INFO_CACHE = {}
 _TUNNEL_CACHE = {}
 _CACHE_TTL = 6  # seconds
 
+# ============================================================================
+#  TUNNEL PRESETS  (single source of truth, mirrored in backhaul-manager.sh)
+#  Values are grounded in the official Backhaul configuration reference.
+#  Each preset carries a full server (iran) + client (kharej) parameter set.
+# ============================================================================
+PRESETS = {
+    "balanced": {
+        "label": "Balanced \u2014 Recommended",
+        "label_fa": "\u0645\u062a\u0639\u0627\u062f\u0644 (\u067e\u06cc\u0634\u0646\u0647\u0627\u062f\u06cc)",
+        "desc": "Best all-round choice. Strong speed and stability for general use, browsing, streaming and downloads.",
+        "best_transport": "wssmux",
+        "rank_speed": 4, "rank_stability": 5, "rank_latency": 4,
+        "iran":   {"keepalive_period": 75, "nodelay": "true", "heartbeat": 30, "channel_size": 4096,
+                    "mux_con": 8, "mux_version": 2, "mux_framesize": 32768,
+                    "mux_recievebuffer": 4194304, "mux_streambuffer": 262144,
+                    "sniffer": "false", "web_port": 0, "log_level": "info",
+                    "mss": 1360, "so_rcvbuf": 4194304, "so_sndbuf": 4194304},
+        "kharej": {"connection_pool": 16, "aggressive_pool": "false", "keepalive_period": 75,
+                    "nodelay": "true", "retry_interval": 3, "dial_timeout": 10,
+                    "mux_version": 2, "mux_framesize": 32768,
+                    "mux_recievebuffer": 4194304, "mux_streambuffer": 262144,
+                    "sniffer": "false", "web_port": 0, "log_level": "info",
+                    "mss": 1360, "so_rcvbuf": 4194304, "so_sndbuf": 4194304},
+    },
+    "gaming": {
+        "label": "Gaming \u2014 Low Latency",
+        "label_fa": "\u06af\u06cc\u0645\u06cc\u0646\u06af / \u06a9\u0645\u200c\u062a\u0623\u062e\u06cc\u0631",
+        "desc": "Lowest ping for online games, calls and remote desktop. Small buffers cut bufferbloat; aggressive pool keeps connections hot.",
+        "best_transport": "tcp",
+        "rank_speed": 3, "rank_stability": 4, "rank_latency": 5,
+        "iran":   {"keepalive_period": 20, "nodelay": "true", "heartbeat": 20, "channel_size": 2048,
+                    "mux_con": 4, "mux_version": 2, "mux_framesize": 16384,
+                    "mux_recievebuffer": 2097152, "mux_streambuffer": 65536,
+                    "sniffer": "false", "web_port": 0, "log_level": "error",
+                    "mss": 1360, "so_rcvbuf": 2097152, "so_sndbuf": 2097152},
+        "kharej": {"connection_pool": 24, "aggressive_pool": "true", "keepalive_period": 20,
+                    "nodelay": "true", "retry_interval": 1, "dial_timeout": 5,
+                    "mux_version": 2, "mux_framesize": 16384,
+                    "mux_recievebuffer": 2097152, "mux_streambuffer": 65536,
+                    "sniffer": "false", "web_port": 0, "log_level": "error",
+                    "mss": 1360, "so_rcvbuf": 2097152, "so_sndbuf": 2097152},
+    },
+    "throughput": {
+        "label": "Throughput \u2014 Max Speed",
+        "label_fa": "\u062d\u062f\u0627\u06a9\u062b\u0631 \u0633\u0631\u0639\u062a \u062f\u0627\u0646\u0644\u0648\u062f",
+        "desc": "Highest bandwidth for big downloads/uploads and many users. Large buffers and more mux connections maximise raw throughput.",
+        "best_transport": "wssmux",
+        "rank_speed": 5, "rank_stability": 4, "rank_latency": 3,
+        "iran":   {"keepalive_period": 75, "nodelay": "true", "heartbeat": 40, "channel_size": 8192,
+                    "mux_con": 16, "mux_version": 2, "mux_framesize": 65536,
+                    "mux_recievebuffer": 8388608, "mux_streambuffer": 1048576,
+                    "sniffer": "false", "web_port": 0, "log_level": "error",
+                    "mss": 1360, "so_rcvbuf": 8388608, "so_sndbuf": 8388608},
+        "kharej": {"connection_pool": 32, "aggressive_pool": "true", "keepalive_period": 75,
+                    "nodelay": "true", "retry_interval": 2, "dial_timeout": 10,
+                    "mux_version": 2, "mux_framesize": 65536,
+                    "mux_recievebuffer": 8388608, "mux_streambuffer": 1048576,
+                    "sniffer": "false", "web_port": 0, "log_level": "error",
+                    "mss": 1360, "so_rcvbuf": 8388608, "so_sndbuf": 8388608},
+    },
+    "stable": {
+        "label": "Stable \u2014 Lossy / Filtered Network",
+        "label_fa": "\u067e\u0627\u06cc\u062f\u0627\u0631 / \u0634\u0628\u06a9\u0647 \u067e\u0631\u0627\u0641\u062a",
+        "desc": "Maximum resistance to drops on unstable or heavily filtered links. Frequent keepalive holds NAT open; quick retries recover fast.",
+        "best_transport": "wssmux",
+        "rank_speed": 3, "rank_stability": 5, "rank_latency": 3,
+        "iran":   {"keepalive_period": 15, "nodelay": "true", "heartbeat": 15, "channel_size": 4096,
+                    "mux_con": 8, "mux_version": 2, "mux_framesize": 32768,
+                    "mux_recievebuffer": 4194304, "mux_streambuffer": 131072,
+                    "sniffer": "false", "web_port": 0, "log_level": "warn",
+                    "mss": 1360, "so_rcvbuf": 4194304, "so_sndbuf": 4194304},
+        "kharej": {"connection_pool": 16, "aggressive_pool": "true", "keepalive_period": 15,
+                    "nodelay": "true", "retry_interval": 1, "dial_timeout": 8,
+                    "mux_version": 2, "mux_framesize": 32768,
+                    "mux_recievebuffer": 4194304, "mux_streambuffer": 131072,
+                    "sniffer": "false", "web_port": 0, "log_level": "warn",
+                    "mss": 1360, "so_rcvbuf": 4194304, "so_sndbuf": 4194304},
+    },
+}
+
+# Per-field help text shown on the (i) tooltips in the custom builder.
+PARAM_HELP = {
+    "keepalive_period": "Seconds between keep-alive packets that hold the tunnel/NAT open. Lower = faster dead-link detection, slightly more overhead.",
+    "nodelay": "TCP_NODELAY. true sends packets immediately (lower latency, best for gaming). false batches them (slightly better for bulk transfer).",
+    "heartbeat": "Seconds between health pings on the control channel. Lower reacts faster to a broken tunnel.",
+    "channel_size": "Size of the internal connection queue. Larger handles more simultaneous new connections before dropping.",
+    "mux_con": "How many TCP connections each mux stream is spread across. More can raise throughput on high-bandwidth links.",
+    "mux_version": "SMUX protocol version. 2 is newer with better flow control/keepalive; 1 is the legacy fallback.",
+    "mux_framesize": "Max bytes per mux frame. Larger reduces framing overhead (good for downloads); smaller reduces latency.",
+    "mux_recievebuffer": "Per-connection receive buffer (bytes). Larger sustains higher throughput; uses more RAM.",
+    "mux_streambuffer": "Per-stream buffer (bytes). Larger smooths bursts; smaller reduces bufferbloat/latency.",
+    "connection_pool": "Pre-opened client connections kept ready. More removes connect latency under load.",
+    "aggressive_pool": "true keeps the pool eagerly refilled for instant connections (great for gaming), at the cost of a few idle connections.",
+    "retry_interval": "Seconds to wait before the client reconnects after a drop. Lower recovers faster.",
+    "dial_timeout": "Max seconds to wait when establishing a new connection before giving up.",
+    "sniffer": "Traffic logging for diagnostics. Keep false in production for best performance.",
+    "web_port": "Built-in monitor web port. 0 disables it (recommended).",
+    "log_level": "Verbosity: panic/fatal/error/warn/info/debug/trace. error/warn are lightest for production.",
+    "mss": "TCP Maximum Segment Size (TCP/TCPMUX). 1360 avoids fragmentation over most tunnels.",
+    "so_rcvbuf": "OS socket receive buffer (bytes) for TCP/TCPMUX. Larger helps throughput.",
+    "so_sndbuf": "OS socket send buffer (bytes) for TCP/TCPMUX. Larger helps throughput.",
+}
+
+
+def get_preset(name, role):
+    """Return a copy of the preset param dict for the given role, or None."""
+    p = PRESETS.get(name)
+    if not p:
+        return None
+    return dict(p.get("iran" if role == "iran" else "kharej", {}))
+
 def invalidate_cache(server_id=None):
     if server_id:
         _INFO_CACHE.pop(server_id, None)
@@ -142,7 +318,9 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
 
     if user != "root" and cmd.startswith("sudo "):
         if password:
-            cmd = f"echo '{password}' | sudo -S {cmd[5:]}"
+            # shlex.quote prevents shell injection if the password contains
+            # quotes/semicolons/backticks; -p '' silences the sudo prompt.
+            cmd = f"printf '%s\\n' {shlex.quote(password)} | sudo -S -p '' {cmd[5:]}"
         else:
             cmd = f"sudo -n {cmd[5:]}"
 
@@ -159,12 +337,16 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         "-o", "ControlPersist=10m",
         "-p", str(port)
     ]
+    run_env = dict(os.environ)
     if password:
         if not _sshpass_available():
             return "sshpass not installed. Run: apt install sshpass", 1
         ssh_opts.extend(["-o", "PubkeyAuthentication=no",
                          "-o", "PreferredAuthentications=password"])
-        full_cmd = ["sshpass", "-p", password, "ssh"] + ssh_opts + [f"{user}@{host}", cmd]
+        # `sshpass -e` reads the password from the SSHPASS env var instead of
+        # the command line, so it never appears in `ps aux` / process listings.
+        run_env["SSHPASS"] = password
+        full_cmd = ["sshpass", "-e", "ssh"] + ssh_opts + [f"{user}@{host}", cmd]
     else:
         ssh_opts.extend(["-o", "BatchMode=yes",
                          "-o", "PreferredAuthentications=publickey"])
@@ -173,8 +355,13 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         else:
             full_cmd = ["ssh"] + ssh_opts + [f"{user}@{host}", cmd]
     try:
-        r = subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip(), r.returncode
+        r = subprocess.run(full_cmd, capture_output=True, text=True,
+                           timeout=timeout, env=run_env)
+        out = r.stdout.strip()
+        # Never echo a leaked password back through stdout/stderr.
+        if password and password in out:
+            out = out.replace(password, "***")
+        return out, r.returncode
     except subprocess.TimeoutExpired:
         return "Command timed out", 1
     except Exception as e:
@@ -545,6 +732,37 @@ def create_tunnel_on_server(srv, params):
 
     is_local = srv.get("ip", "") in ["127.0.0.1", "localhost", get_local_ip()]
 
+    # --- Resolve tuning parameters from preset / custom overrides ----------
+    preset_name = params.get("preset", "balanced")
+    if preset_name not in PRESETS and preset_name != "custom":
+        return {"success": False, "error": f"Invalid preset: {preset_name}"}
+
+    # Base values come from a known-good preset; "custom" starts from balanced.
+    base = get_preset("balanced" if preset_name == "custom" else preset_name, role) or {}
+    custom = {}
+    if preset_name == "custom":
+        raw_custom = params.get("custom", {}) or {}
+        # custom may be namespaced per side {"iran":{...},"kharej":{...}} or flat.
+        if isinstance(raw_custom, dict) and ("iran" in raw_custom or "kharej" in raw_custom):
+            custom = raw_custom.get(role, {}) or {}
+        elif isinstance(raw_custom, dict):
+            custom = raw_custom
+
+    _BOOL = {"nodelay", "aggressive_pool", "sniffer"}
+    _LOGLEVELS = {"panic", "fatal", "error", "warn", "info", "debug", "trace"}
+
+    def _val(key):
+        v = custom.get(key, base.get(key))
+        if key in _BOOL:
+            return "true" if str(v).lower() in ("true", "1", "yes", "on") else "false"
+        if key == "log_level":
+            return v if v in _LOGLEVELS else "info"
+        try:
+            n = int(v)
+            return n if n >= 0 else 0
+        except (TypeError, ValueError):
+            return base.get(key, 0)
+
     # --- Build config content (common to local and remote) ---
     if role == "iran":
         config_lines = [
@@ -556,16 +774,24 @@ def create_tunnel_on_server(srv, params):
             config_lines.append("accept_udp = false")
         config_lines.extend([
             f'token = "{token}"',
-            "keepalive_period = 75",
-            "nodelay = true",
-            "heartbeat = 40",
-            "channel_size = 4096",
+            f'keepalive_period = {_val("keepalive_period")}',
+            f'nodelay = {_val("nodelay")}',
+            f'heartbeat = {_val("heartbeat")}',
+            f'channel_size = {_val("channel_size")}',
         ])
         if transport != "tcp":
-            config_lines.extend(["mux_con = 8", "mux_version = 1", "mux_framesize = 32768", "mux_recievebuffer = 4194304", "mux_streambuffer = 65536"])
+            config_lines.extend([
+                f'mux_con = {_val("mux_con")}',
+                f'mux_version = {_val("mux_version")}',
+                f'mux_framesize = {_val("mux_framesize")}',
+                f'mux_recievebuffer = {_val("mux_recievebuffer")}',
+                f'mux_streambuffer = {_val("mux_streambuffer")}',
+            ])
         if transport == "wssmux":
             config_lines.extend([f'tls_cert = "{CERT_DIR}/wssmux.crt"', f'tls_key = "{CERT_DIR}/wssmux.key"'])
-        config_lines.extend(["sniffer = false", "web_port = 0", 'log_level = "info"'])
+        config_lines.extend([f'sniffer = {_val("sniffer")}', f'web_port = {_val("web_port")}', f'log_level = "{_val("log_level")}"'])
+        if transport in ("tcp", "tcpmux"):
+            config_lines.extend([f'mss = {_val("mss")}', f'so_rcvbuf = {_val("so_rcvbuf")}', f'so_sndbuf = {_val("so_sndbuf")}'])
         if ports_mapping:
             config_lines.append(f"ports = [{ports_mapping}]")
         else:
@@ -580,16 +806,23 @@ def create_tunnel_on_server(srv, params):
         config_lines.extend([
             f'transport = "{transport}"',
             f'token = "{token}"',
-            "connection_pool = 8",
-            "aggressive_pool = false",
-            "keepalive_period = 75",
-            "nodelay = true",
-            "retry_interval = 3",
-            "dial_timeout = 10",
+            f'connection_pool = {_val("connection_pool")}',
+            f'aggressive_pool = {_val("aggressive_pool")}',
+            f'keepalive_period = {_val("keepalive_period")}',
+            f'nodelay = {_val("nodelay")}',
+            f'retry_interval = {_val("retry_interval")}',
+            f'dial_timeout = {_val("dial_timeout")}',
         ])
         if transport != "tcp":
-            config_lines.extend(["mux_version = 1", "mux_framesize = 32768", "mux_recievebuffer = 4194304", "mux_streambuffer = 65536"])
-        config_lines.extend(["sniffer = false", "web_port = 0", 'log_level = "info"'])
+            config_lines.extend([
+                f'mux_version = {_val("mux_version")}',
+                f'mux_framesize = {_val("mux_framesize")}',
+                f'mux_recievebuffer = {_val("mux_recievebuffer")}',
+                f'mux_streambuffer = {_val("mux_streambuffer")}',
+            ])
+        config_lines.extend([f'sniffer = {_val("sniffer")}', f'web_port = {_val("web_port")}', f'log_level = "{_val("log_level")}"'])
+        if transport in ("tcp", "tcpmux"):
+            config_lines.extend([f'mss = {_val("mss")}', f'so_rcvbuf = {_val("so_rcvbuf")}', f'so_sndbuf = {_val("so_sndbuf")}'])
 
     config_content = "\n".join(config_lines) + "\n"
 
@@ -768,6 +1001,15 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
     def send_html(self, html, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # All assets are inline; lock the page down so injected/3rd-party
+        # script or framing can't run.
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                         "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                         "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(html.encode())
 
@@ -806,17 +1048,18 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": "unauthorized"}, 401)
             return
 
-        if path == "/api/debug_ssh":
-            query = urllib.parse.parse_qs(parsed.query)
-            srv_id = query.get("server_id", [""])[0]
-            cmd = query.get("cmd", [""])[0]
-            data_servers = load_servers()
-            srv = next((s for s in data_servers.get("servers", []) if s.get("id") == srv_id), None)
-            if not srv:
-                self.send_json({"error": "server not found"}, 404)
-                return
-            out, code = remote_exec(srv, cmd)
-            self.send_json({"stdout": out, "exit_code": code})
+        # NOTE: the old /api/debug_ssh endpoint (arbitrary remote command
+        # execution) was removed - it was a remote-code-execution risk even
+        # for an authenticated session.
+
+        if path == "/api/presets":
+            out = {}
+            for k, p in PRESETS.items():
+                out[k] = {kk: p[kk] for kk in
+                          ("label", "label_fa", "desc", "best_transport",
+                           "rank_speed", "rank_stability", "rank_latency",
+                           "iran", "kharej")}
+            self.send_json({"presets": out, "help": PARAM_HELP})
             return
 
         if path == "/api/settings/get":
@@ -910,18 +1153,28 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             data = {}
 
         if path == "/api/auth/login":
+            ip = self.client_address[0] if self.client_address else "?"
+            locked = login_locked(ip)
+            if locked:
+                self.send_json({"success": False,
+                                "error": f"Too many attempts. Try again in {locked}s."}, 429)
+                return
             username = data.get("username", "")
             password = data.get("password", "")
             if check_credentials(username, password):
-                sid = secrets.token_hex(32)
-                sessions[sid] = {"user": username, "time": time.time()}
+                record_login_ok(ip)
+                sid = new_session(username)
                 secure = "; Secure" if SSL_ON else ""
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Lax{secure}")
+                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Strict{secure}")
                 self.end_headers()
-                self.wfile.write(json.dumps({"success": True}).encode())
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "must_change_password": is_default_credentials(),
+                }).encode())
             else:
+                record_login_fail(ip)
                 self.send_json({"success": False, "error": "Invalid credentials"}, 401)
             return
 
@@ -1208,6 +1461,10 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             port = data.get("port", "9743")
             token = data.get("token", "")
             ports_mapping = data.get("ports", "")
+            preset = data.get("preset", "balanced")
+            custom = data.get("custom", {})
+            if not isinstance(custom, dict):
+                custom = {}
 
             if not token:
                 tok_out, _ = run_cmd("cat /proc/sys/kernel/random/uuid 2>/dev/null")
@@ -1221,12 +1478,14 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
             iran_result = create_tunnel_on_server(iran_srv, {
                 "role": "iran", "transport": transport, "port": port,
-                "token": token, "ports": ports_mapping
+                "token": token, "ports": ports_mapping,
+                "preset": preset, "custom": custom
             })
 
             kharej_result = create_tunnel_on_server(kharej_srv, {
                 "role": "kharej", "transport": transport, "port": port,
-                "token": token, "iran_ip": iran_ip
+                "token": token, "iran_ip": iran_ip,
+                "preset": preset, "custom": custom
             })
 
             invalidate_cache()
@@ -1507,7 +1766,7 @@ form.addEventListener('submit',async(e)=>{
     const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({username:document.getElementById('u').value,password:pi.value})});
     const d=await r.json();
-    if(d.success){btnText.textContent='Welcome!';location.href='/';}
+    if(d.success){btnText.textContent='Welcome!';if(d.must_change_password){try{sessionStorage.setItem('bh_must_change','1');}catch(e){}}location.href='/';}
     else{throw new Error(d.error||'Invalid credentials');}
   }catch(ex){
     err.textContent='⚠ '+ex.message;err.style.display='flex';
@@ -1672,7 +1931,36 @@ textarea.code:focus{border-color:var(--acc)}
 .mini-loader{border:2px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:14px;height:14px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:50px 20px;font-size:14px}
-@media(max-width:520px){.row2{grid-template-columns:1fr}.container{padding:16px}}
+/* ---- Preset selector / custom builder ---- */
+.preset-info{margin:-4px 0 14px;padding:14px 16px;border-radius:14px;
+  background:var(--glass);border:1px solid var(--glass-brd);display:none}
+.preset-info.show{display:block;animation:fadein .25s}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.preset-info .pi-desc{font-size:13.5px;color:var(--text);line-height:1.6;margin-bottom:10px}
+.preset-info .pi-best{font-size:12.5px;color:var(--mut);margin-bottom:12px}
+.preset-info .pi-best b{color:var(--accent)}
+.bars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.bar-item .bar-lbl{font-size:11px;color:var(--mut);margin-bottom:5px;display:flex;justify-content:space-between}
+.bar-track{height:7px;border-radius:6px;background:var(--glass-brd);overflow:hidden}
+.bar-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--acc2),var(--accent));transition:width .4s}
+.custom-box{margin:0 0 16px;padding:16px;border-radius:14px;border:1px dashed var(--glass-brd);background:var(--glass)}
+.custom-head{font-size:13px;font-weight:700;margin-bottom:4px}
+.custom-head .mut{font-weight:500;color:var(--mut)}
+.custom-sub{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);margin:14px 0 8px}
+.custom-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 14px}
+@media(max-width:560px){.custom-grid{grid-template-columns:1fr}}
+.cf{display:flex;flex-direction:column;gap:4px}
+.cf label{font-size:11.5px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.cf input,.cf select{padding:8px 10px;border-radius:9px;border:1px solid var(--glass-brd);
+  background:var(--bg);color:var(--text);font-size:13px;width:100%}
+.ic-i{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;
+  background:var(--accent);color:#fff;font-size:10px;font-weight:700;font-style:normal;cursor:help;position:relative}
+.ic-i:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:140%;transform:translateX(-50%);
+  width:230px;padding:9px 11px;border-radius:10px;background:#111827;color:#f3f4f6;font-size:11.5px;
+  font-weight:500;line-height:1.5;text-align:left;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:50;white-space:normal}
+.ic-i:hover::before{content:"";position:absolute;left:50%;bottom:128%;transform:translateX(-50%);
+  border:6px solid transparent;border-top-color:#111827;z-index:50}
+@media(max-width:520px){.row2{grid-template-columns:1fr}.container{padding:16px}.bars{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -1732,6 +2020,21 @@ textarea.code:focus{border-color:var(--acc)}
           <div class="field"><label>Transport</label><select id="cb-trans"><option value="wssmux">WSSMUX (recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
           <div class="field"><label>Tunnel Port</label><input id="cb-port" type="number" value="9743" required></div>
         </div>
+        <div class="field">
+          <label>Performance Preset</label>
+          <select id="cb-preset" onchange="onPresetChange()"></select>
+        </div>
+        <div id="preset-info" class="preset-info"></div>
+        <div id="custom-box" class="custom-box" style="display:none">
+          <div class="custom-head">Custom parameters
+            <span class="mut">— hover the <span class="ic-i">i</span> for an explanation of each field</span>
+          </div>
+          <div class="custom-sub">Server side (Iran)</div>
+          <div id="custom-iran" class="custom-grid"></div>
+          <div class="custom-sub">Client side (Kharej)</div>
+          <div id="custom-kharej" class="custom-grid"></div>
+        </div>
+
         <div class="field"><label>Custom Token <span style="color:var(--mut);font-weight:500">(blank = auto-generate)</span></label>
           <div class="input-group">
             <input id="cb-token" placeholder="Optional secure token">
@@ -2008,7 +2311,8 @@ async function createBothTunnel(e){
   try{
     await api('/api/tunnel/create-both',{
       iran_server:{id:$('cb-iran').value},kharej_server:{id:$('cb-kharej').value},
-      transport:$('cb-trans').value,port:$('cb-port').value,ports:ports,token:$('cb-token').value
+      transport:$('cb-trans').value,port:$('cb-port').value,ports:ports,token:$('cb-token').value,
+      preset:$('cb-preset').value,custom:($('cb-preset').value==='custom'?collectCustom():{})
     });
     showToast('Tunnel created on both servers!');
     $('createBothForm').reset();$('cb-port').value='9743';$('portRows').innerHTML='';addPortRow();
@@ -2026,11 +2330,77 @@ async function saveSettings(e){
 }
 async function logout(){try{await api('/api/auth/logout',{});}catch(e){}location.href='/login.html';}
 
+/* ---------- Presets ---------- */
+var PRESETS={},PHELP={};
+var ORDER=['balanced','gaming','throughput','stable','custom'];
+var IRAN_KEYS=['keepalive_period','nodelay','heartbeat','channel_size','mux_con','mux_version','mux_framesize','mux_recievebuffer','mux_streambuffer','sniffer','web_port','log_level','mss','so_rcvbuf','so_sndbuf'];
+var KHAREJ_KEYS=['connection_pool','aggressive_pool','keepalive_period','nodelay','retry_interval','dial_timeout','mux_version','mux_framesize','mux_recievebuffer','mux_streambuffer','sniffer','web_port','log_level','mss','so_rcvbuf','so_sndbuf'];
+var BOOLF=['nodelay','aggressive_pool','sniffer'];
+var LL=['panic','fatal','error','warn','info','debug','trace'];
+async function loadPresets(){
+  try{const r=await api('/api/presets');PRESETS=r.presets||{};PHELP=r.help||{};}catch(e){return;}
+  const sel=$('cb-preset');sel.innerHTML='';
+  ORDER.forEach(k=>{
+    if(k==='custom'){sel.insertAdjacentHTML('beforeend','<option value="custom">Custom — full manual control</option>');return;}
+    const p=PRESETS[k];if(!p)return;
+    sel.insertAdjacentHTML('beforeend','<option value="'+k+'">'+p.label+'</option>');
+  });
+  sel.value='balanced';onPresetChange();
+}
+function rankBar(lbl,v){
+  return '<div class="bar-item"><div class="bar-lbl"><span>'+lbl+'</span><span>'+v+'/5</span></div>'+
+    '<div class="bar-track"><div class="bar-fill" style="width:'+(v*20)+'%"></div></div></div>';
+}
+function onPresetChange(){
+  const k=$('cb-preset').value,info=$('preset-info'),cbox=$('custom-box');
+  if(k==='custom'){
+    info.classList.remove('show');
+    cbox.style.display='block';renderCustom();return;
+  }
+  cbox.style.display='none';
+  const p=PRESETS[k];if(!p){info.classList.remove('show');return;}
+  if(p.best_transport)$('cb-trans').value=p.best_transport;
+  info.innerHTML='<div class="pi-desc">'+p.desc+'</div>'+
+    '<div class="pi-best">Best transport for this preset: <b>'+(p.best_transport||'').toUpperCase()+'</b></div>'+
+    '<div class="bars">'+rankBar('Speed',p.rank_speed)+rankBar('Stability',p.rank_stability)+rankBar('Low latency',p.rank_latency)+'</div>';
+  info.classList.add('show');
+}
+function fieldHtml(side,key,val){
+  const tip=(PHELP[key]||'').replace(/"/g,'&quot;');
+  let input;
+  if(BOOLF.indexOf(key)>-1){
+    input='<select data-side="'+side+'" data-key="'+key+'">'+
+      '<option value="true"'+(String(val)==='true'?' selected':'')+'>true</option>'+
+      '<option value="false"'+(String(val)==='false'?' selected':'')+'>false</option></select>';
+  }else if(key==='log_level'){
+    input='<select data-side="'+side+'" data-key="'+key+'">'+LL.map(l=>'<option'+(l===val?' selected':'')+'>'+l+'</option>').join('')+'</select>';
+  }else{
+    input='<input type="number" data-side="'+side+'" data-key="'+key+'" value="'+val+'">';
+  }
+  return '<div class="cf"><label>'+key+' <span class="ic-i" data-tip="'+tip+'">i</span></label>'+input+'</div>';
+}
+function renderCustom(){
+  const base=PRESETS['balanced']||{iran:{},kharej:{}};
+  $('custom-iran').innerHTML=IRAN_KEYS.map(k=>fieldHtml('iran',k,base.iran[k])).join('');
+  $('custom-kharej').innerHTML=KHAREJ_KEYS.map(k=>fieldHtml('kharej',k,base.kharej[k])).join('');
+}
+function collectCustom(){
+  const out={iran:{},kharej:{}};
+  document.querySelectorAll('#custom-box [data-key]').forEach(el=>{
+    const side=el.dataset.side||'iran';out[side][el.dataset.key]=el.value;
+  });
+  return out;
+}
+
 /* ---------- Init ---------- */
 addPortRow(443,443);
 api('/api/settings/get').then(d=>{if(d&&d.username)$('set-u').value=d.username});
+loadPresets();
 fetchServers();
 fetchTunnels();
+try{if(sessionStorage.getItem('bh_must_change')==='1'){sessionStorage.removeItem('bh_must_change');
+  showToast('Security: you are still using the default password. Please set a new one now.',true);
+  setTimeout(()=>{try{openModal('m-settings');}catch(e){}},900);}}catch(e){}
 setInterval(()=>{const t=document.querySelector('#tab-servers');if(t&&t.style.display!=='none')fetchServers();const u=document.querySelector('#tab-tunnels');if(u&&u.style.display!=='none')fetchTunnels();},15000);
 </script>
 </body>
@@ -2050,7 +2420,11 @@ if __name__ == "__main__":
     except (TypeError, ValueError):
         port = PORT
 
-    server = ReuseAddrHTTPServer(("0.0.0.0", port), PanelHandler)
+    # Bind address: env override > config file > all-interfaces default.
+    # Set PANEL_BIND=127.0.0.1 to expose the panel only to a local reverse
+    # proxy (recommended when running plain HTTP).
+    bind_host = os.environ.get("PANEL_BIND", cfg.get("bind", "0.0.0.0"))
+    server = ReuseAddrHTTPServer((bind_host, port), PanelHandler)
 
     scheme = "http"
     cert, key = cfg.get("ssl_cert", ""), cfg.get("ssl_key", "")
@@ -2069,8 +2443,8 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.8.0")
-    print("  Multi-Server Edition by emad1381")
+    print("  BackhaulManager Web Panel v2.9.0")
+    print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")
     if SSL_ON:

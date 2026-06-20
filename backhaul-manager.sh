@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.5.3
-#  Author  : emad1381
+#  Version : 1.6.0
+#  Author  : emad1381  (security-hardened + performance profiles)
 #  Supports: TCP | TCPMUX | WSMUX | WSSMUX
 #  Roles   : Iran (Server) | Kharej (Client)
 # =============================================================================
@@ -547,6 +547,102 @@ PRESET_KHAREJ_MSS=1360
 PRESET_KHAREJ_SO_RCVBUF=4194304
 PRESET_KHAREJ_SO_SNDBUF=4194304
 
+# Active profile label (set by _apply_profile). Mirrors webpanel PRESETS.
+PRESET_PROFILE="balanced"
+
+# ─── PERFORMANCE PROFILES (mirror of webpanel/server.py PRESETS) ─────────────
+# Reassigns all PRESET_* values for the chosen scenario. Keep these in sync
+# with the PRESETS dict in webpanel/server.py so terminal and panel match.
+_apply_profile() {
+    local profile="${1:-balanced}"
+    PRESET_PROFILE="$profile"
+    case "$profile" in
+        gaming)
+            # Lowest latency: small buffers, hot pool, aggressive reconnect.
+            PRESET_IRAN_KEEPALIVE=20;  PRESET_IRAN_NODELAY=true;  PRESET_IRAN_HEARTBEAT=20
+            PRESET_IRAN_CHANNEL_SIZE=2048; PRESET_IRAN_MUX_CON=4; PRESET_IRAN_MUX_VERSION=2
+            PRESET_IRAN_MUX_FRAMESIZE=16384; PRESET_IRAN_MUX_RECVBUF=2097152; PRESET_IRAN_MUX_STREAMBUF=65536
+            PRESET_IRAN_SNIFFER=false; PRESET_IRAN_WEB_PORT=0
+            PRESET_IRAN_LOG_LEVEL_TCP="error"; PRESET_IRAN_LOG_LEVEL_MUX="error"
+            PRESET_IRAN_MSS=1360; PRESET_IRAN_SO_RCVBUF=2097152; PRESET_IRAN_SO_SNDBUF=2097152
+            PRESET_KHAREJ_CONN_POOL=24; PRESET_KHAREJ_AGGRESSIVE_POOL=true; PRESET_KHAREJ_KEEPALIVE=20
+            PRESET_KHAREJ_DIAL_TIMEOUT=5; PRESET_KHAREJ_RETRY_INTERVAL=1; PRESET_KHAREJ_NODELAY=true
+            PRESET_KHAREJ_MUX_VERSION=2; PRESET_KHAREJ_MUX_FRAMESIZE=16384
+            PRESET_KHAREJ_MUX_RECVBUF=2097152; PRESET_KHAREJ_MUX_STREAMBUF=65536
+            PRESET_KHAREJ_SNIFFER=false; PRESET_KHAREJ_WEB_PORT=0
+            PRESET_KHAREJ_LOG_LEVEL_TCP="error"; PRESET_KHAREJ_LOG_LEVEL_MUX="error"
+            PRESET_KHAREJ_MSS=1360; PRESET_KHAREJ_SO_RCVBUF=2097152; PRESET_KHAREJ_SO_SNDBUF=2097152
+            ;;
+        throughput)
+            # Max bandwidth: large buffers, more mux connections.
+            PRESET_IRAN_KEEPALIVE=75;  PRESET_IRAN_NODELAY=true;  PRESET_IRAN_HEARTBEAT=40
+            PRESET_IRAN_CHANNEL_SIZE=8192; PRESET_IRAN_MUX_CON=16; PRESET_IRAN_MUX_VERSION=2
+            PRESET_IRAN_MUX_FRAMESIZE=65536; PRESET_IRAN_MUX_RECVBUF=8388608; PRESET_IRAN_MUX_STREAMBUF=1048576
+            PRESET_IRAN_SNIFFER=false; PRESET_IRAN_WEB_PORT=0
+            PRESET_IRAN_LOG_LEVEL_TCP="error"; PRESET_IRAN_LOG_LEVEL_MUX="error"
+            PRESET_IRAN_MSS=1360; PRESET_IRAN_SO_RCVBUF=8388608; PRESET_IRAN_SO_SNDBUF=8388608
+            PRESET_KHAREJ_CONN_POOL=32; PRESET_KHAREJ_AGGRESSIVE_POOL=true; PRESET_KHAREJ_KEEPALIVE=75
+            PRESET_KHAREJ_DIAL_TIMEOUT=10; PRESET_KHAREJ_RETRY_INTERVAL=2; PRESET_KHAREJ_NODELAY=true
+            PRESET_KHAREJ_MUX_VERSION=2; PRESET_KHAREJ_MUX_FRAMESIZE=65536
+            PRESET_KHAREJ_MUX_RECVBUF=8388608; PRESET_KHAREJ_MUX_STREAMBUF=1048576
+            PRESET_KHAREJ_SNIFFER=false; PRESET_KHAREJ_WEB_PORT=0
+            PRESET_KHAREJ_LOG_LEVEL_TCP="error"; PRESET_KHAREJ_LOG_LEVEL_MUX="error"
+            PRESET_KHAREJ_MSS=1360; PRESET_KHAREJ_SO_RCVBUF=8388608; PRESET_KHAREJ_SO_SNDBUF=8388608
+            ;;
+        stable)
+            # Lossy/filtered links: frequent keepalive, fast retry.
+            PRESET_IRAN_KEEPALIVE=15;  PRESET_IRAN_NODELAY=true;  PRESET_IRAN_HEARTBEAT=15
+            PRESET_IRAN_CHANNEL_SIZE=4096; PRESET_IRAN_MUX_CON=8; PRESET_IRAN_MUX_VERSION=2
+            PRESET_IRAN_MUX_FRAMESIZE=32768; PRESET_IRAN_MUX_RECVBUF=4194304; PRESET_IRAN_MUX_STREAMBUF=131072
+            PRESET_IRAN_SNIFFER=false; PRESET_IRAN_WEB_PORT=0
+            PRESET_IRAN_LOG_LEVEL_TCP="warn"; PRESET_IRAN_LOG_LEVEL_MUX="warn"
+            PRESET_IRAN_MSS=1360; PRESET_IRAN_SO_RCVBUF=4194304; PRESET_IRAN_SO_SNDBUF=4194304
+            PRESET_KHAREJ_CONN_POOL=16; PRESET_KHAREJ_AGGRESSIVE_POOL=true; PRESET_KHAREJ_KEEPALIVE=15
+            PRESET_KHAREJ_DIAL_TIMEOUT=8; PRESET_KHAREJ_RETRY_INTERVAL=1; PRESET_KHAREJ_NODELAY=true
+            PRESET_KHAREJ_MUX_VERSION=2; PRESET_KHAREJ_MUX_FRAMESIZE=32768
+            PRESET_KHAREJ_MUX_RECVBUF=4194304; PRESET_KHAREJ_MUX_STREAMBUF=131072
+            PRESET_KHAREJ_SNIFFER=false; PRESET_KHAREJ_WEB_PORT=0
+            PRESET_KHAREJ_LOG_LEVEL_TCP="warn"; PRESET_KHAREJ_LOG_LEVEL_MUX="warn"
+            PRESET_KHAREJ_MSS=1360; PRESET_KHAREJ_SO_RCVBUF=4194304; PRESET_KHAREJ_SO_SNDBUF=4194304
+            ;;
+        *)  # balanced (recommended default)
+            PRESET_PROFILE="balanced"
+            PRESET_IRAN_KEEPALIVE=75;  PRESET_IRAN_NODELAY=true;  PRESET_IRAN_HEARTBEAT=30
+            PRESET_IRAN_CHANNEL_SIZE=4096; PRESET_IRAN_MUX_CON=8; PRESET_IRAN_MUX_VERSION=2
+            PRESET_IRAN_MUX_FRAMESIZE=32768; PRESET_IRAN_MUX_RECVBUF=4194304; PRESET_IRAN_MUX_STREAMBUF=262144
+            PRESET_IRAN_SNIFFER=false; PRESET_IRAN_WEB_PORT=0
+            PRESET_IRAN_LOG_LEVEL_TCP="info"; PRESET_IRAN_LOG_LEVEL_MUX="info"
+            PRESET_IRAN_MSS=1360; PRESET_IRAN_SO_RCVBUF=4194304; PRESET_IRAN_SO_SNDBUF=4194304
+            PRESET_KHAREJ_CONN_POOL=16; PRESET_KHAREJ_AGGRESSIVE_POOL=false; PRESET_KHAREJ_KEEPALIVE=75
+            PRESET_KHAREJ_DIAL_TIMEOUT=10; PRESET_KHAREJ_RETRY_INTERVAL=3; PRESET_KHAREJ_NODELAY=true
+            PRESET_KHAREJ_MUX_VERSION=2; PRESET_KHAREJ_MUX_FRAMESIZE=32768
+            PRESET_KHAREJ_MUX_RECVBUF=4194304; PRESET_KHAREJ_MUX_STREAMBUF=262144
+            PRESET_KHAREJ_SNIFFER=false; PRESET_KHAREJ_WEB_PORT=0
+            PRESET_KHAREJ_LOG_LEVEL_TCP="info"; PRESET_KHAREJ_LOG_LEVEL_MUX="info"
+            PRESET_KHAREJ_MSS=1360; PRESET_KHAREJ_SO_RCVBUF=4194304; PRESET_KHAREJ_SO_SNDBUF=4194304
+            ;;
+    esac
+}
+
+# Interactive profile picker shown during tunnel creation.
+_choose_profile() {
+    echo -e "\n  ${BOLD}${WHITE}Choose a performance profile:${NC}" >&2
+    separator >&2
+    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Balanced${NC}    ${DIM}- best all-round (speed+stability). Recommended.${NC}" >&2
+    echo -e "  ${WHITE}[2]${NC} ${LCYAN}Gaming${NC}      ${DIM}- lowest latency for games/calls. Best with TCP.${NC}" >&2
+    echo -e "  ${WHITE}[3]${NC} ${LYELLOW}Throughput${NC}  ${DIM}- max download/upload speed. Best with WSSMUX.${NC}" >&2
+    echo -e "  ${WHITE}[4]${NC} ${LMAGENTA}Stable${NC}      ${DIM}- best on lossy/filtered links. Best with WSSMUX.${NC}" >&2
+    separator >&2
+    local c; prompt "Profile [1-4, default 1]:" >&2; read -r c
+    case "$c" in
+        2) _apply_profile gaming ;;
+        3) _apply_profile throughput ;;
+        4) _apply_profile stable ;;
+        *) _apply_profile balanced ;;
+    esac
+    success "Profile applied: ${PRESET_PROFILE}" >&2
+}
+
 # ─── SHOW PRESET SUMMARY ─────────────────────────────────────────────────────
 _show_preset_summary() {
     local role="$1" transport="$2"
@@ -941,10 +1037,13 @@ menu_create_tunnel() {
     fi
 
     # ── Step 3: Preset or Advanced ────────────────────────────────────────────
+    # Pick a named performance profile first; it sets the PRESET_* baseline.
+    _choose_profile
+
     echo -e "\n  ${BOLD}${WHITE}Step 3 of 3 — Tuning Parameters${NC}"
     separator
-    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Preset${NC}   — Apply recommended default values automatically"
-    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Advanced${NC} — Configure every parameter manually ${DIM}(defaults shown in brackets)${NC}"
+    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Preset${NC}   — Apply the '${PRESET_PROFILE}' profile values automatically"
+    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Advanced${NC} — Fine-tune every parameter manually ${DIM}(profile values shown in brackets)${NC}"
     separator
     prompt "Choice [1/2]:"; read -r mode_choice
 
