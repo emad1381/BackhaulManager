@@ -1838,6 +1838,11 @@ def get_main_page():
 <style>
 :root{
   --acc:#22d3ee; --acc-h:#06b6d4; --acc2:#6366f1; --acc3:#2dd4bf;
+  /* Aliases: several dashboard rules (cron-on button, rank bars, tooltip "i"
+     badge, preset text) referenced --accent*, which is only defined on the
+     login page. Without these, those gradients/colors were invalid and the
+     white-on-transparent auto-restart icon vanished in light mode. */
+  --accent:var(--acc); --accent2:var(--acc2); --accent3:var(--acc3);
   --bg:#060a14; --bg2:#0e1626; --card:rgba(20,29,51,.55); --card-solid:#0e1626;
   --brd:rgba(255,255,255,.09); --brd2:rgba(255,255,255,.06);
   --text:#e6edf8; --mut:#8d9ab8;
@@ -1980,7 +1985,7 @@ textarea.code:focus{border-color:var(--acc)}
 .mini-loader{border:2px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:14px;height:14px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:50px 20px;font-size:14px}
-.btn-icon.cron-on{color:#fff;background:linear-gradient(135deg,var(--acc2),var(--accent));border-color:transparent}
+.btn-icon.cron-on{color:#fff;background:var(--acc2);background:linear-gradient(135deg,var(--acc2),var(--acc));border-color:transparent}
 /* ---- Preset selector / custom builder ---- */
 .preset-info{margin:-4px 0 14px;padding:14px 16px;border-radius:14px;
   background:var(--glass);border:1px solid var(--glass-brd);display:none}

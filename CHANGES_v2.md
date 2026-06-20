@@ -22,6 +22,11 @@ Panel `v2.9.3` · Script `v1.6.1`
    misleading "best transport: WSSMUX" next to a TCP choice — the info box shows
    `Transport: TCP (your choice) · recommended: WSSMUX`. The generated TOML was
    already transport-correct (mux fields only for mux transports).
+5. **Light-mode UI fix** — the active auto-restart button (`.cron-on`), rank
+   bars and tooltip badge referenced `--accent*`, a variable only defined on the
+   login page. In the dashboard that made the gradient invalid, so the white
+   clock icon disappeared on light backgrounds. Added `--accent*` aliases to the
+   dashboard theme (plus a solid-colour fallback on the button).
 
 ## 🔒 Security fixes (web panel)
 1. **SSH command injection fixed** — the `sudo` password path now uses `shlex.quote`
