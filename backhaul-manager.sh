@@ -2178,6 +2178,245 @@ menu_manage_tunnels() {
 WEBPANEL_PORT=54321
 WEBPANEL_DIR="$INSTALL_DIR/webpanel"
 WEBPANEL_SCRIPT="$WEBPANEL_DIR/server.py"
+WEBPANEL_CONFIG="$WEBPANEL_DIR/panel_config.json"
+WEBPANEL_SETTINGS="$WEBPANEL_DIR/settings.json"
+
+# Load the configured port (set by _configure_webpanel) into WEBPANEL_PORT.
+_load_panel_port() {
+    if [[ -f "$WEBPANEL_CONFIG" ]] && command -v python3 &>/dev/null; then
+        local p
+        p=$(python3 -c "import json;print(json.load(open('$WEBPANEL_CONFIG')).get('port',54321))" 2>/dev/null)
+        [[ "$p" =~ ^[0-9]+$ ]] && WEBPANEL_PORT="$p"
+    fi
+}
+
+# Echo "https" if TLS is enabled in the panel config, otherwise "http".
+_panel_scheme() {
+    if [[ -f "$WEBPANEL_CONFIG" ]] && command -v python3 &>/dev/null \
+        && python3 -c "import json,sys;sys.exit(0 if json.load(open('$WEBPANEL_CONFIG')).get('ssl_enabled') else 1)" 2>/dev/null; then
+        echo "https"
+    else
+        echo "http"
+    fi
+}
+
+# Echo the configured domain (if any), otherwise empty.
+_panel_domain() {
+    if [[ -f "$WEBPANEL_CONFIG" ]] && command -v python3 &>/dev/null; then
+        python3 -c "import json;print(json.load(open('$WEBPANEL_CONFIG')).get('domain','') or '')" 2>/dev/null
+    fi
+}
+
+# Echo the configured admin username (defaults to admin).
+_panel_user() {
+    if [[ -f "$WEBPANEL_SETTINGS" ]] && command -v python3 &>/dev/null; then
+        python3 -c "import json;print(json.load(open('$WEBPANEL_SETTINGS')).get('admin_user','admin'))" 2>/dev/null
+    else
+        echo "admin"
+    fi
+}
+
+_write_panel_config() {
+    local port="$1" ssl="$2" domain="$3" cert="$4" key="$5"
+    mkdir -p "$WEBPANEL_DIR"
+    python3 - "$WEBPANEL_CONFIG" "$port" "$ssl" "$domain" "$cert" "$key" <<'PY'
+import json, sys
+path, port, ssl, domain, cert, key = sys.argv[1:7]
+cfg = {
+    "port": int(port),
+    "ssl_enabled": (ssl == "true"),
+    "domain": domain,
+    "ssl_cert": cert,
+    "ssl_key": key,
+}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PY
+    chmod 600 "$WEBPANEL_CONFIG" 2>/dev/null || true
+}
+
+# Persist admin credentials. Password is stored only as a PBKDF2 hash.
+_write_panel_settings() {
+    local user="$1" pass="$2"
+    mkdir -p "$WEBPANEL_DIR"
+    python3 - "$WEBPANEL_SETTINGS" "$user" "$pass" <<'PY'
+import json, os, sys, secrets, hashlib
+path, user, pw = sys.argv[1:4]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+if user:
+    data["admin_user"] = user
+if pw:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 100_000).hex()
+    data["admin_salt"] = salt
+    data["admin_pass_hash"] = digest
+    data.pop("admin_pass", None)
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PY
+    chmod 600 "$WEBPANEL_SETTINGS" 2>/dev/null || true
+}
+
+# Generate a self-signed certificate for the panel (HTTPS without a domain).
+_generate_panel_selfsigned() {
+    mkdir -p "$CERT_DIR"
+    if [[ ! -f "$CERT_DIR/panel.crt" || ! -f "$CERT_DIR/panel.key" ]]; then
+        info "Generating self-signed certificate for the Web Panel..."
+        if ! openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/panel.key" \
+            -out "$CERT_DIR/panel.crt" -days 3650 -nodes \
+            -subj "/CN=backhaul-panel" >/dev/null 2>&1; then
+            warn "openssl failed. Could not create self-signed certificate."
+            return 1
+        fi
+    fi
+    chmod 600 "$CERT_DIR/panel.key" 2>/dev/null || true
+    return 0
+}
+
+# Restart-on-renew hook so the panel picks up renewed Let's Encrypt certs.
+_setup_cert_renew_hook() {
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy 2>/dev/null || return 0
+    cat > /etc/letsencrypt/renewal-hooks/deploy/restart-backhaul-panel.sh <<'HOOK'
+#!/usr/bin/env bash
+systemctl restart backhaul-webpanel 2>/dev/null \
+    || pkill -f "python3.*server\.py" 2>/dev/null || true
+HOOK
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/restart-backhaul-panel.sh 2>/dev/null || true
+}
+
+# Obtain a free Let's Encrypt certificate for $domain using the standalone
+# HTTP-01 challenge (needs TCP/80 reachable from the internet).
+_obtain_letsencrypt_cert() {
+    local domain="$1" email="$2"
+
+    if ! command -v certbot &>/dev/null; then
+        info "Installing certbot..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -y -q >/dev/null 2>&1
+            apt-get install -y certbot >/dev/null 2>&1
+        elif command -v dnf &>/dev/null; then
+            dnf install -y certbot >/dev/null 2>&1
+        elif command -v yum &>/dev/null; then
+            yum install -y certbot >/dev/null 2>&1
+        fi
+    fi
+    if ! command -v certbot &>/dev/null; then
+        warn "certbot could not be installed."
+        return 1
+    fi
+
+    # Open port 80 for the ACME challenge if UFW is active.
+    if command -v ufw &>/dev/null; then ufw allow 80/tcp >/dev/null 2>&1 || true; fi
+    # Free port 80 for certbot's standalone server.
+    fuser -k -9 80/tcp 2>/dev/null || true
+    sleep 1
+
+    info "Requesting certificate for ${domain} via Let's Encrypt..."
+    local email_args="--register-unsafely-without-email"
+    [[ -n "$email" ]] && email_args="--email $email"
+
+    if certbot certonly --standalone --non-interactive --agree-tos \
+        $email_args -d "$domain" --http-01-port 80 \
+        --keep-until-expiring >/dev/null 2>&1; then
+        if [[ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]]; then
+            success "Certificate issued for ${domain}."
+            _setup_cert_renew_hook
+            return 0
+        fi
+    fi
+    warn "Let's Encrypt issuance failed (is the domain pointed at this server and is port 80 open?)."
+    return 1
+}
+
+# Interactive configuration: port, admin credentials, and HTTPS/domain.
+_configure_webpanel() {
+    section "Web Panel Configuration"
+    local ip; ip=$(get_local_ip)
+    mkdir -p "$WEBPANEL_DIR"
+
+    # 1) Listening port
+    local port=""
+    while true; do
+        prompt "Web Panel port [default 54321]:"; read -r port
+        port="${port:-54321}"
+        if is_valid_port "$port"; then break; fi
+        warn "Invalid port. Enter a number between 1 and 65535."
+    done
+
+    # 2) Admin credentials
+    local set_user set_pass pass2
+    prompt "Admin username [default admin]:"; read -r set_user
+    set_user="${set_user:-admin}"
+    while true; do
+        prompt "Admin password (leave empty to keep current):"; read -rs set_pass; echo
+        [[ -z "$set_pass" ]] && break
+        prompt "Confirm password:"; read -rs pass2; echo
+        [[ "$set_pass" == "$pass2" ]] && break
+        warn "Passwords do not match. Try again."
+    done
+
+    # 3) HTTPS / domain
+    local ssl_enabled="false" domain="" cert_path="" key_path="" use_domain email use_self
+    echo ""
+    info "HTTPS protects your login and SSH credentials from being sent in clear text."
+    prompt "Put the panel behind a domain with a free HTTPS certificate (Let's Encrypt)? [y/N]:"
+    read -r use_domain
+    if [[ "$use_domain" =~ ^[Yy]$ ]]; then
+        while true; do
+            prompt "Enter the domain that already points to this server (${ip}):"
+            read -r domain
+            if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]]; then
+                break
+            fi
+            warn "Invalid domain. Example: panel.example.com"
+        done
+        prompt "Email for Let's Encrypt expiry notices (optional, press Enter to skip):"
+        read -r email
+        if _obtain_letsencrypt_cert "$domain" "$email"; then
+            cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
+            key_path="/etc/letsencrypt/live/$domain/privkey.pem"
+            ssl_enabled="true"
+        else
+            warn "Falling back to a self-signed certificate so HTTPS still works."
+            if _generate_panel_selfsigned; then
+                ssl_enabled="true"; cert_path="$CERT_DIR/panel.crt"; key_path="$CERT_DIR/panel.key"
+            fi
+        fi
+    else
+        prompt "Enable HTTPS with a self-signed certificate anyway (recommended)? [Y/n]:"
+        read -r use_self
+        if [[ ! "$use_self" =~ ^[Nn]$ ]]; then
+            if _generate_panel_selfsigned; then
+                ssl_enabled="true"; cert_path="$CERT_DIR/panel.crt"; key_path="$CERT_DIR/panel.key"
+            fi
+        fi
+    fi
+
+    WEBPANEL_PORT="$port"
+    # Open the panel port in UFW if it is the active firewall.
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+    fi
+    _write_panel_config "$port" "$ssl_enabled" "$domain" "$cert_path" "$key_path"
+    if [[ -n "$set_pass" || "$set_user" != "admin" ]]; then
+        _write_panel_settings "$set_user" "$set_pass"
+    fi
+
+    echo ""
+    success "Web Panel configuration saved."
+    local scheme; scheme=$(_panel_scheme)
+    local host="${domain:-$ip}"
+    echo -e "  ${BULLET} URL  : ${CYAN}${scheme}://${host}:${port}${NC}"
+    [[ "$ssl_enabled" == "true" ]] \
+        && echo -e "  ${BULLET} TLS  : ${LGREEN}enabled${NC}" \
+        || echo -e "  ${BULLET} TLS  : ${YELLOW}disabled${NC}"
+}
 
 _install_webpanel_deps() {
     local deps_missing=0
@@ -2210,6 +2449,11 @@ menu_webpanel() {
     separator
 
     local ip; ip=$(get_local_ip)
+    _load_panel_port
+    local scheme; scheme=$(_panel_scheme)
+    local domain; domain=$(_panel_domain)
+    local host="${domain:-$ip}"
+    local panel_user; panel_user=$(_panel_user)
 
     # Check if webpanel is already running
     local running_pid=""
@@ -2225,8 +2469,13 @@ menu_webpanel() {
         if [[ -n "$wp_ver" ]]; then
             echo -e "  ${BULLET} Version : ${LBLUE}v${wp_ver}${NC}"
         fi
-        echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
-        echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+        echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+        echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
+        if [[ "$scheme" == "https" ]]; then
+            echo -e "  ${BULLET} TLS     : ${LGREEN}enabled${NC}"
+        else
+            echo -e "  ${BULLET} TLS     : ${YELLOW}disabled (use [7] Configure)${NC}"
+        fi
         echo -e "  ${BULLET} PID     : ${DIM}${running_pid}${NC}"
     else
         echo -e "  ${WARN} ${YELLOW}Web Panel is NOT running${NC}"
@@ -2242,6 +2491,7 @@ menu_webpanel() {
     echo -e "  ${WHITE}[4]${NC} ${YELLOW}Install / Update${NC} Web Panel (Auto-restart if running)"
     echo -e "  ${WHITE}[5]${NC} ${LCYAN}Restart${NC} Web Panel"
     echo -e "  ${WHITE}[6]${NC} ${RED}Uninstall${NC} Web Panel"
+    echo -e "  ${WHITE}[7]${NC} ${LMAGENTA}Configure${NC} (port / HTTPS / domain / password)"
     echo -e "  ${WHITE}[0]${NC} Back to Main Menu"
     separator
     prompt "Choice:"; read -r wp_choice
@@ -2260,8 +2510,8 @@ menu_webpanel() {
                 sleep 2
                 if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
                     success "Web Panel started via systemd!"
-                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
-                    echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                    echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+                    echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
                 else
                     warn "Failed to start via systemd. Check: journalctl -u backhaul-webpanel"
                 fi
@@ -2314,8 +2564,8 @@ menu_webpanel() {
                 echo -e "  ${BOLD}${LGREEN}  ║           Web Panel is LIVE!                        ║${NC}"
                 echo -e "  ${BOLD}${LGREEN}  ╚══════════════════════════════════════════════════════╝${NC}"
                 echo ""
-                echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
-                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
                 echo ""
             else
                 warn "Failed to start Web Panel. Check logs:"
@@ -2363,8 +2613,8 @@ SERVICE
 
             if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
                 success "Web Panel service installed and started!"
-                echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
-                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
                 echo -e "  ${BULLET} Service : ${DIM}backhaul-webpanel.service${NC}"
                 echo -e "  ${BULLET} Auto-start on boot: ${LGREEN}enabled${NC}"
             else
@@ -2421,8 +2671,18 @@ SERVICE
             if [[ "$success" == "true" ]]; then
                 chmod +x "$WEBPANEL_SCRIPT"
                 success "Web Panel files updated: $WEBPANEL_SCRIPT"
+
+                # First-time install: run the secure configuration wizard.
+                if [[ ! -f "$WEBPANEL_CONFIG" ]]; then
+                    info "Let's configure the panel securely before the first start."
+                    _configure_webpanel
+                    _load_panel_port
+                    scheme=$(_panel_scheme); domain=$(_panel_domain); host="${domain:-$ip}"
+                    panel_user=$(_panel_user)
+                fi
+
                 echo -e "  ${BULLET} Port    : ${CYAN}$WEBPANEL_PORT${NC}"
-                echo -e "  ${BULLET} Login   : ${LYELLOW}admin / admin${NC}"
+                echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
 
                 # If Web Panel was already running, restart it to apply changes
                 if [[ -n "$running_pid" ]] || systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
@@ -2464,7 +2724,7 @@ SERVICE
                 sleep 2
                 if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
                     success "Web Panel restarted via systemd!"
-                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                    echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
                 else
                     warn "Failed to restart via systemd. Check: journalctl -u backhaul-webpanel"
                 fi
@@ -2482,7 +2742,7 @@ SERVICE
                 
                 if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
                     success "Web Panel restarted!"
-                    echo -e "  ${BULLET} URL     : ${CYAN}http://${ip}:${WEBPANEL_PORT}${NC}"
+                    echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
                 else
                     warn "Failed to restart Web Panel. Check logs:"
                     tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null
@@ -2516,6 +2776,37 @@ SERVICE
             fi
             
             success "Web Panel uninstalled completely!"
+            press_enter
+            ;;
+        7)
+            # Configure port / HTTPS / domain / admin password
+            _install_webpanel_deps
+            _configure_webpanel
+
+            # Apply the new configuration if the panel is installed/running.
+            if [[ -f "$WEBPANEL_SCRIPT" ]]; then
+                info "Applying configuration (restarting Web Panel)..."
+                pkill -9 -f "python3.*server\.py" 2>/dev/null
+                fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
+                sleep 2
+                if systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
+                    systemctl restart backhaul-webpanel
+                    sleep 2
+                    systemctl is-active --quiet backhaul-webpanel 2>/dev/null \
+                        && success "Web Panel restarted with new settings." \
+                        || warn "Restart failed. Check: journalctl -u backhaul-webpanel"
+                elif [[ -n "$running_pid" ]]; then
+                    nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
+                    sleep 3
+                    pgrep -f "python3.*server\.py" >/dev/null 2>&1 \
+                        && success "Web Panel restarted with new settings." \
+                        || { warn "Failed to restart. Check logs:"; tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null; }
+                else
+                    info "Settings saved. Start the panel with option [1]."
+                fi
+            else
+                info "Settings saved. Install the panel with option [4], then start it."
+            fi
             press_enter
             ;;
         0) return ;;

@@ -85,11 +85,32 @@ Beautiful web interface to manage **both Iran and Kharej servers** from one plac
 
 1. Run the script and select **[3] Web Panel**
 2. Choose **[4] Install / Update** to download the web panel files
-3. Choose **[1] Start** to launch the panel
-4. Open `http://YOUR_SERVER_IP:54321` in your browser
-5. Login with `admin` / `admin`
+3. On first install you'll be guided through the secure setup wizard
+   (**[7] Configure** lets you re-run it anytime):
+   - **Panel port** — choose any port (default `54321`)
+   - **Admin username & password** — the password is stored only as a salted
+     PBKDF2-SHA256 hash, never in plain text
+   - **HTTPS** — put the panel behind a domain and get a free Let's Encrypt
+     certificate, or use a self-signed certificate
+4. Choose **[1] Start** to launch the panel
+5. Open the URL shown by the script (e.g. `https://your-domain:PORT`) in your browser
+6. Login with the username and password you set during configuration
+
+> Security tip: always enable HTTPS and set a strong password. Over plain HTTP
+> your login and SSH credentials are sent in clear text.
+
+### Putting the panel behind a domain (free HTTPS)
+
+In **[7] Configure**, answer **y** to the domain question, then enter a domain
+whose DNS A record already points to this server. The script installs
+`certbot`, obtains a Let's Encrypt certificate via the HTTP-01 challenge
+(TCP/80 must be reachable), wires it into the panel, and installs a renewal
+hook that restarts the panel automatically when the certificate is renewed.
 
 **Features:**
+- **HTTPS / TLS** — Let's Encrypt (domain) or self-signed certificates
+- **Hashed credentials** — admin password stored as a PBKDF2-SHA256 hash
+- **Hardened sessions** — `HttpOnly`, `SameSite=Lax`, `Secure` (on HTTPS) cookies with expiry
 - **Multi-Server Management** — add Iran + Kharej servers, manage from one dashboard
 - **One-Click Tunnel Creation** — create matching tunnel on both servers simultaneously
 - **SSH Password & Key Auth** — connect with password or SSH key, custom SSH port
@@ -110,7 +131,22 @@ To run as a service (auto-start on boot), select **[3] Start on boot**.
 - Existing configs are backed up before overwrite/edit/delete operations.
 - For WSSMUX, the script can generate a self-signed TLS certificate automatically.
 - Cron configs for auto-restart are stored in `/etc/backhaul/cron/`.
+- Web Panel runtime settings are stored in `/etc/backhaul/webpanel/panel_config.json`
+  and credentials in `settings.json` (both `chmod 600`, root-only).
+
+## Security
+
+- The Web Panel can serve over **HTTPS** using a Let's Encrypt certificate
+  (when bound to a domain) or a self-signed certificate.
+- The admin password is stored as a **salted PBKDF2-HMAC-SHA256 hash**, never
+  in plain text.
+- Session cookies use `HttpOnly`, `SameSite=Lax`, the `Secure` flag (over
+  HTTPS), and expire after 12 hours.
+- Files containing credentials (`settings.json`, `servers.json`,
+  `panel_config.json`) are written with `0600` permissions.
+- Always change the default password and enable HTTPS before exposing the
+  panel to the internet.
 
 ## License
 
-No license has been added yet.
+Released under the [MIT License](LICENSE). © 2026 emad1381.

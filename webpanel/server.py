@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.6.0
+Version: 2.7.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -18,6 +18,9 @@ import urllib.parse
 from http.cookies import SimpleCookie
 import secrets
 import socket
+import ssl
+import hashlib
+import hmac
 
 PORT = 54321
 ADMIN_USER = "admin"
@@ -32,6 +35,13 @@ CRON_MARKER = "# backhaul-auto-restart"
 PANEL_DIR = f"{INSTALL_DIR}/webpanel"
 SERVERS_FILE = f"{PANEL_DIR}/servers.json"
 SETTINGS_FILE = f"{PANEL_DIR}/settings.json"
+PANEL_CONFIG_FILE = f"{PANEL_DIR}/panel_config.json"
+
+# Session lifetime in seconds (idle/absolute expiry). Default: 12 hours.
+SESSION_TTL = 12 * 3600
+# Set to True at startup when the panel is served over HTTPS so the
+# session cookie can carry the Secure flag.
+SSL_ON = False
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
@@ -46,6 +56,50 @@ def save_settings(data):
     os.makedirs(PANEL_DIR, exist_ok=True)
     with open(SETTINGS_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+    try:
+        os.chmod(SETTINGS_FILE, 0o600)
+    except OSError:
+        pass
+
+def load_panel_config():
+    """Runtime config (port / TLS) written by the installer (backhaul-manager.sh)."""
+    cfg = {"port": PORT, "ssl_enabled": False, "domain": "",
+           "ssl_cert": "", "ssl_key": ""}
+    if os.path.exists(PANEL_CONFIG_FILE):
+        try:
+            with open(PANEL_CONFIG_FILE) as f:
+                cfg.update(json.load(f) or {})
+        except Exception:
+            pass
+    return cfg
+
+def hash_password(pw, salt=None):
+    """Return (salt_hex, hash_hex) using PBKDF2-HMAC-SHA256."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 100_000).hex()
+    return salt, digest
+
+def verify_password(pw, salt, digest):
+    if not salt or not digest:
+        return False
+    try:
+        calc = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 100_000).hex()
+    except Exception:
+        return False
+    return hmac.compare_digest(calc, digest)
+
+def check_credentials(username, password):
+    """Validate login against settings.json. Prefers a stored PBKDF2 hash,
+    falls back to a legacy plaintext admin_pass for backward compatibility."""
+    settings = load_settings()
+    if username != settings.get("admin_user", ADMIN_USER):
+        return False
+    if settings.get("admin_pass_hash"):
+        return verify_password(password, settings.get("admin_salt", ""),
+                               settings.get("admin_pass_hash"))
+    # Legacy / first-run fallback (plaintext or built-in default).
+    return hmac.compare_digest(password, settings.get("admin_pass", ADMIN_PASS))
 
 sessions = {}
 
@@ -131,6 +185,11 @@ def save_servers(data):
     os.makedirs(PANEL_DIR, exist_ok=True)
     with open(SERVERS_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+    # This file holds SSH passwords/keys - keep it root-only.
+    try:
+        os.chmod(SERVERS_FILE, 0o600)
+    except OSError:
+        pass
 
 def sudo_cmd(user, cmd):
     if user != "root":
@@ -647,7 +706,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
     def send_json(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
@@ -662,6 +722,10 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         cookie.load(self.headers.get("Cookie", ""))
         sid = cookie.get("session")
         if sid and sid.value in sessions:
+            if time.time() - sessions[sid.value].get("time", 0) > SESSION_TTL:
+                # Session expired - drop it and force re-login.
+                del sessions[sid.value]
+                return False
             return True
         return False
 
@@ -794,13 +858,13 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/auth/login":
             username = data.get("username", "")
             password = data.get("password", "")
-            settings = load_settings()
-            if username == settings.get("admin_user", ADMIN_USER) and password == settings.get("admin_pass", ADMIN_PASS):
+            if check_credentials(username, password):
                 sid = secrets.token_hex(32)
                 sessions[sid] = {"user": username, "time": time.time()}
+                secure = "; Secure" if SSL_ON else ""
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Lax")
+                self.send_header("Set-Cookie", f"session={sid}; Path=/; HttpOnly; SameSite=Lax{secure}")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": True}).encode())
             else:
@@ -829,9 +893,15 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             new_pass = data.get("password", "")
             if new_user and new_pass:
                 settings = load_settings()
+                salt, digest = hash_password(new_pass)
                 settings["admin_user"] = new_user
-                settings["admin_pass"] = new_pass
+                settings["admin_salt"] = salt
+                settings["admin_pass_hash"] = digest
+                # Drop any legacy plaintext password.
+                settings.pop("admin_pass", None)
                 save_settings(settings)
+                # Invalidate existing sessions so the new credentials take effect.
+                sessions.clear()
                 self.send_json({"success": True})
             else:
                 self.send_json({"success": False, "error": "Username and password required"}, 400)
@@ -2267,14 +2337,43 @@ if __name__ == "__main__":
     os.makedirs(BACKUP_DIR, exist_ok=True)
     os.makedirs(PANEL_DIR, exist_ok=True)
 
-    server = ReuseAddrHTTPServer(("0.0.0.0", PORT), PanelHandler)
+    cfg = load_panel_config()
+    # Port: env override > config file > built-in default.
+    try:
+        port = int(os.environ.get("PANEL_PORT", cfg.get("port", PORT)))
+    except (TypeError, ValueError):
+        port = PORT
+
+    server = ReuseAddrHTTPServer(("0.0.0.0", port), PanelHandler)
+
+    scheme = "http"
+    cert, key = cfg.get("ssl_cert", ""), cfg.get("ssl_key", "")
+    if cfg.get("ssl_enabled") and cert and key and os.path.exists(cert) and os.path.exists(key):
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert, key)
+            # Modern TLS only.
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            SSL_ON = True
+            scheme = "https"
+        except Exception as e:
+            print(f"  [!] TLS setup failed ({e}). Falling back to HTTP.")
+
     local_ip = get_local_ip()
+    host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.6.0")
+    print("  BackhaulManager Web Panel v2.7.0")
     print("  Multi-Server Edition by emad1381")
     print("")
-    print(f"  URL:      http://{local_ip}:{PORT}")
-    print(f"  Login:    {ADMIN_USER} / {ADMIN_PASS}")
+    print(f"  URL:      {scheme}://{host}:{port}")
+    if SSL_ON:
+        print("  TLS:      enabled")
+    else:
+        print("  TLS:      DISABLED - credentials are sent in clear text!")
+    settings_now = load_settings()
+    if not settings_now.get("admin_pass_hash") and settings_now.get("admin_pass", ADMIN_PASS) == ADMIN_PASS:
+        print("  [!] WARNING: default password is still 'admin'. Change it in Settings now.")
     print("")
     print("  Manage Iran + Kharej servers from one panel!")
     print("  Press Ctrl+C to stop")
