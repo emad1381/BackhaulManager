@@ -1,6 +1,18 @@
 # BackhaulManager — Security Hardening & Performance Presets
 
-Panel `v2.9.3` · Script `v1.6.1`
+Panel `v2.9.4` · Script `v1.6.2`
+
+## 🐞 Throughput preset framesize fix (v2.9.4 / script v1.6.2)
+- The **Throughput** preset set `mux_framesize = 65536`, but SMUX rejects any
+  frame size **larger than 65535** (16-bit length field). Result: every mux
+  session failed with `max frame size must not be larger than 65535` and the
+  WSSMUX tunnel could not pass traffic. Lowered to **65535** (the true maximum)
+  in both the web panel and the terminal script.
+- Added a **server-side clamp**: any custom `mux_framesize > 65535` is now capped
+  to 65535 so manual input can't reproduce the crash.
+- Re-validated all four presets (Balanced / Gaming / Throughput / Stable) for
+  both Iran and Kharej against the SMUX rules: `0 < framesize ≤ 65535`,
+  `mux_version ∈ {1,2}`, `streambuffer ≤ receivebuffer`. All pass.
 
 ## 🐞 Auto-restart & preset fixes (v2.9.3 / script v1.6.1)
 1. **Cron interval bug fixed (critical)** — auto-restart used `*/N * * * *`, but

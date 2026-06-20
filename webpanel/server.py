@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.9.3 (cron interval fix + preset/transport decoupling)
+Version: 2.9.4 (cron fix + preset/transport decoupling + framesize cap)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -242,13 +242,13 @@ PRESETS = {
         "best_transport": "wssmux",
         "rank_speed": 5, "rank_stability": 4, "rank_latency": 3,
         "iran":   {"keepalive_period": 75, "nodelay": "true", "heartbeat": 40, "channel_size": 8192,
-                    "mux_con": 16, "mux_version": 2, "mux_framesize": 65536,
+                    "mux_con": 16, "mux_version": 2, "mux_framesize": 65535,
                     "mux_recievebuffer": 8388608, "mux_streambuffer": 1048576,
                     "sniffer": "false", "web_port": 0, "log_level": "error",
                     "mss": 1360, "so_rcvbuf": 8388608, "so_sndbuf": 8388608},
         "kharej": {"connection_pool": 32, "aggressive_pool": "true", "keepalive_period": 75,
                     "nodelay": "true", "retry_interval": 2, "dial_timeout": 10,
-                    "mux_version": 2, "mux_framesize": 65536,
+                    "mux_version": 2, "mux_framesize": 65535,
                     "mux_recievebuffer": 8388608, "mux_streambuffer": 1048576,
                     "sniffer": "false", "web_port": 0, "log_level": "error",
                     "mss": 1360, "so_rcvbuf": 8388608, "so_sndbuf": 8388608},
@@ -787,7 +787,13 @@ def create_tunnel_on_server(srv, params):
             return v if v in _LOGLEVELS else "info"
         try:
             n = int(v)
-            return n if n >= 0 else 0
+            if n < 0:
+                n = 0
+            # SMUX rejects a frame size above 65535 (16-bit length field), which
+            # crashes every mux session. Clamp it so custom input can't break.
+            if key == "mux_framesize" and n > 65535:
+                n = 65535
+            return n
         except (TypeError, ValueError):
             return base.get(key, 0)
 
