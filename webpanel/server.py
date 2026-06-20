@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.7.0
+Version: 2.8.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -112,6 +112,30 @@ def run_cmd(cmd, timeout=30):
     except Exception as e:
         return str(e), 1
 
+# Cache `which sshpass` so we don't spawn a subprocess on every SSH call.
+_SSHPASS_OK = None
+def _sshpass_available():
+    global _SSHPASS_OK
+    if _SSHPASS_OK is None:
+        out, _ = run_cmd("command -v sshpass")
+        _SSHPASS_OK = bool(out)
+    return _SSHPASS_OK
+
+# Short-lived caches so the dashboard renders instantly on re-fetch / tab
+# switches instead of re-running an SSH sweep every time. Invalidated on any
+# mutating action so the UI always reflects the latest state after a change.
+_INFO_CACHE = {}
+_TUNNEL_CACHE = {}
+_CACHE_TTL = 6  # seconds
+
+def invalidate_cache(server_id=None):
+    if server_id:
+        _INFO_CACHE.pop(server_id, None)
+        _TUNNEL_CACHE.pop(server_id, None)
+    else:
+        _INFO_CACHE.clear()
+        _TUNNEL_CACHE.clear()
+
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
     if not is_safe_ip_domain(host):
         return "Invalid SSH host IP/domain name", 1
@@ -122,22 +146,28 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         else:
             cmd = f"sudo -n {cmd[5:]}"
 
-    ssh_opts = [
-        "-o", "StrictHostKeyChecking=no", 
-        "-o", "ConnectTimeout=5", 
-        "-o", "ControlMaster=auto", 
-        "-o", "ControlPath=/tmp/ssh_mux_%h_%p_%r", 
+    ssh_opts = ["-T",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "ConnectTimeout=4",
+        "-o", "ServerAliveInterval=5",
+        "-o", "ServerAliveCountMax=2",
+        "-o", "GSSAPIAuthentication=no",
+        "-o", "Compression=no",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=/tmp/ssh_mux_%h_%p_%r",
         "-o", "ControlPersist=10m",
         "-p", str(port)
     ]
     if password:
-        sshpass_check, _ = run_cmd("which sshpass")
-        if not sshpass_check:
+        if not _sshpass_available():
             return "sshpass not installed. Run: apt install sshpass", 1
-        ssh_opts.extend(["-o", "PubkeyAuthentication=no"])
+        ssh_opts.extend(["-o", "PubkeyAuthentication=no",
+                         "-o", "PreferredAuthentications=password"])
         full_cmd = ["sshpass", "-p", password, "ssh"] + ssh_opts + [f"{user}@{host}", cmd]
     else:
-        ssh_opts.extend(["-o", "BatchMode=yes"])
+        ssh_opts.extend(["-o", "BatchMode=yes",
+                         "-o", "PreferredAuthentications=publickey"])
         if key_file:
             full_cmd = ["ssh", "-i", key_file] + ssh_opts + [f"{user}@{host}", cmd]
         else:
@@ -190,6 +220,8 @@ def save_servers(data):
         os.chmod(SERVERS_FILE, 0o600)
     except OSError:
         pass
+    # Server list changed - drop cached info so the UI reflects it immediately.
+    invalidate_cache()
 
 def sudo_cmd(user, cmd):
     if user != "root":
@@ -204,6 +236,17 @@ def get_binary_version(host=None, user=None, key_file=None, password="", port=22
     return out if out else "not installed"
 
 def get_server_info(srv):
+    sid = srv.get("id", "")
+    now = time.time()
+    c = _INFO_CACHE.get(sid)
+    if c and now - c[0] < _CACHE_TTL:
+        return c[1]
+    res = _get_server_info_uncached(srv)
+    if sid:
+        _INFO_CACHE[sid] = (now, res)
+    return res
+
+def _get_server_info_uncached(srv):
     host = srv.get("ip", "127.0.0.1")
     user = srv.get("ssh_user", "root")
     key = srv.get("ssh_key", "")
@@ -281,6 +324,17 @@ def get_server_info(srv):
     }
 
 def get_tunnels_from_server(srv):
+    sid = srv.get("id", "")
+    now = time.time()
+    c = _TUNNEL_CACHE.get(sid)
+    if c and now - c[0] < _CACHE_TTL:
+        return c[1]
+    res = _get_tunnels_from_server_uncached(srv)
+    if sid:
+        _TUNNEL_CACHE[sid] = (now, res)
+    return res
+
+def _get_tunnels_from_server_uncached(srv):
     host = srv.get("ip", "127.0.0.1")
     user = srv.get("ssh_user", "root")
     key = srv.get("ssh_key", "")
@@ -1090,6 +1144,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
                 if srv:
                     out, code = remote_exec(srv, f"systemctl {action} {svc}")
+                    invalidate_cache(server_id)
                     self.send_json({"success": code == 0, "output": out})
                 else:
                     self.send_json({"error": "server not found"}, 404)
@@ -1114,6 +1169,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                     remote_exec(srv, f"rm -f {INSTALL_DIR}/{config_name}.toml {SERVICE_DIR}/{svc}")
                     remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
                     remote_exec(srv, "systemctl daemon-reload")
+                    invalidate_cache(server_id)
                     self.send_json({"success": True})
                 else:
                     self.send_json({"error": "server not found"}, 404)
@@ -1130,6 +1186,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"error": "server not found"}, 404)
                 return
             result = create_tunnel_on_server(srv, data)
+            invalidate_cache(srv_id)
             self.send_json(result)
             return
 
@@ -1172,6 +1229,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 "token": token, "iran_ip": iran_ip
             })
 
+            invalidate_cache()
             self.send_json({
                 "success": iran_result.get("success") and kharej_result.get("success"),
                 "iran": iran_result,
@@ -1202,9 +1260,11 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if action == "remove":
                 remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
                 remote_exec(srv, f"rm -f {CRON_CONFIG_DIR}/{svc}.conf")
+                invalidate_cache(server_id)
             elif interval > 0:
                 remote_exec(srv, f"bash -c \"mkdir -p {CRON_CONFIG_DIR} && echo -e 'SERVICE={svc}\\nINTERVAL={interval}' > {CRON_CONFIG_DIR}/{svc}.conf\"")
                 remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > /tmp/cron_tmp; echo '*/{interval} * * * * systemctl restart {svc} {CRON_MARKER} {svc}' >> /tmp/cron_tmp; crontab /tmp/cron_tmp; rm -f /tmp/cron_tmp\"")
+            invalidate_cache(server_id)
             self.send_json({"success": True})
             return
 
@@ -1233,6 +1293,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                         cmd_write = f"cat << '{delim}' | {sudo_cmd(ssh_user, f'tee {config_path} >/dev/null')}\n{config}{delim}"
                         run_ssh(host, ssh_user, srv.get("ssh_key", ""), cmd_write, password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
                     remote_exec(srv, f"systemctl restart {svc}")
+                    invalidate_cache(server_id)
                     self.send_json({"success": True})
                 else:
                     self.send_json({"error": "server not found"}, 404)
@@ -1281,6 +1342,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             remote_exec(srv, f"chmod +x {BINARY}")
             remote_exec(srv, f"rm -rf /tmp/backhaul /tmp/{asset}")
             ver = get_binary_version(srv.get("ip"), srv.get("ssh_user"), srv.get("ssh_key"), password=srv.get("ssh_password", ""), port=srv.get("ssh_port", 22))
+            invalidate_cache(server_id)
             self.send_json({"success": True, "version": ver, "used_mirror": used_mirror})
             return
 
@@ -1464,115 +1526,178 @@ def get_main_page():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
 <title>Backhaul Panel</title>
 <style>
 :root{
-  --acc:#22d3ee; --acc-h:#06b6d4; --acc2:#6366f1;
-  --bg:#070b16; --bg2:#0d1426; --card:rgba(18,26,46,.5);
-  --brd:rgba(255,255,255,.08); --text:#e2e8f0; --mut:#94a3b8;
-  --succ:#10b981; --err:#f43f5e; --warn:#f59e0b;
+  --acc:#22d3ee; --acc-h:#06b6d4; --acc2:#6366f1; --acc3:#2dd4bf;
+  --bg:#060a14; --bg2:#0e1626; --card:rgba(20,29,51,.55); --card-solid:#0e1626;
+  --brd:rgba(255,255,255,.09); --brd2:rgba(255,255,255,.06);
+  --text:#e6edf8; --mut:#8d9ab8;
+  --succ:#10b981; --err:#fb7185; --warn:#f59e0b;
+  --ring:0 0 0 4px color-mix(in srgb,var(--acc) 22%,transparent);
+  --shadow:0 24px 60px -24px rgba(0,0,0,.7);
 }
 html[data-theme="light"]{
-  --bg:#f1f5f9; --bg2:#e2e8f0; --card:rgba(255,255,255,.6);
-  --brd:rgba(0,0,0,.08); --text:#0f172a; --mut:#64748b;
+  --bg:#eef2fb; --bg2:#e3eaf6; --card:rgba(255,255,255,.7); --card-solid:#ffffff;
+  --brd:rgba(15,28,51,.10); --brd2:rgba(15,28,51,.06);
+  --text:#0f1c33; --mut:#5a6a88;
+  --shadow:0 24px 50px -24px rgba(40,60,120,.35);
 }
-*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
-body{background:var(--bg);color:var(--text);overflow-x:hidden;transition:background .2s}
-.bg-glow{position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(circle at 10% 20%,rgba(99,102,241,.08) 0%,transparent 50%),radial-gradient(circle at 90% 80%,rgba(34,211,238,.08) 0%,transparent 50%)}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{background:var(--bg);color:var(--text);min-height:100vh;transition:background .25s,color .25s}
+.aurora{position:fixed;inset:-25%;z-index:0;filter:blur(100px);opacity:.6;pointer-events:none}
+.aurora i{position:absolute;display:block;border-radius:50%;mix-blend-mode:screen}
+.aurora .b1{width:42vw;height:42vw;left:-5vw;top:-8vw;background:radial-gradient(circle,#22d3ee,transparent 62%);animation:fl1 18s ease-in-out infinite}
+.aurora .b2{width:38vw;height:38vw;right:-6vw;top:0;background:radial-gradient(circle,#6366f1,transparent 62%);animation:fl2 21s ease-in-out infinite}
+.aurora .b3{width:36vw;height:36vw;left:30vw;bottom:-16vw;background:radial-gradient(circle,#2dd4bf,transparent 62%);animation:fl3 24s ease-in-out infinite}
+html[data-theme="light"] .aurora{opacity:.4}
+@keyframes fl1{50%{transform:translate(5vw,4vh) scale(1.1)}}
+@keyframes fl2{50%{transform:translate(-4vw,5vh) scale(1.08)}}
+@keyframes fl3{50%{transform:translate(3vw,-5vh) scale(1.12)}}
 
-nav{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--brd);background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(12px);position:sticky;top:0;z-index:100}
-.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px}
-.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;color:#fff}
-.logo svg{width:20px;height:20px}
-.nav-actions{display:flex;gap:12px}
+nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 22px;border-bottom:1px solid var(--brd);
+  background:color-mix(in srgb,var(--bg) 78%,transparent);backdrop-filter:blur(18px) saturate(160%)}
+.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:18px;letter-spacing:-.3px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));
+  display:grid;place-items:center;color:#04121a;box-shadow:0 10px 26px -8px var(--acc2)}
+.logo svg{width:21px;height:21px}
+.nav-actions{display:flex;gap:10px}
 
-.btn{padding:8px 16px;border-radius:10px;border:none;background:var(--card);border:1px solid var(--brd);color:var(--text);cursor:pointer;font-weight:600;display:flex;align-items:center;gap:8px;transition:.2s}
-.btn:hover{background:var(--bg2)}
-.btn-primary{background:var(--acc);color:#000;border:none}
-.btn-primary:hover{background:var(--acc-h)}
+.icon-btn{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;cursor:pointer;
+  background:var(--card);border:1px solid var(--brd);color:var(--text);transition:.18s;backdrop-filter:blur(12px)}
+.icon-btn:hover{border-color:var(--acc);transform:translateY(-1px)}
+.icon-btn.danger:hover{border-color:var(--err);color:var(--err)}
+
+.btn{padding:9px 16px;border-radius:11px;border:1px solid var(--brd);background:var(--card);color:var(--text);
+  cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:8px;transition:.18s;backdrop-filter:blur(10px)}
+.btn:hover{border-color:var(--acc);transform:translateY(-1px)}
+.btn-primary{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04121a;border:none;box-shadow:0 12px 26px -10px var(--acc2)}
+.btn-primary:hover{filter:brightness(1.06)}
 .btn-danger{color:var(--err);border-color:color-mix(in srgb,var(--err) 30%,transparent);background:color-mix(in srgb,var(--err) 10%,transparent)}
-.btn-danger:hover{background:var(--err);color:#fff}
+.btn-danger:hover{background:var(--err);color:#fff;border-color:var(--err)}
+.btn-icon{padding:9px;width:40px;justify-content:center}
 
-.container{max-width:1400px;margin:0 auto;padding:24px}
-.header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;flex-wrap:wrap;gap:16px}
-.header h2{font-size:24px;font-weight:700}
+.container{max-width:1380px;margin:0 auto;padding:24px;position:relative;z-index:1}
 
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px}
-.card{background:var(--card);border:1px solid var(--brd);border-radius:16px;padding:20px;backdrop-filter:blur(16px)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border:1px solid var(--brd);border-radius:16px;padding:18px 20px;backdrop-filter:blur(16px);position:relative;overflow:hidden}
+.stat-card::after{content:"";position:absolute;right:-20px;top:-20px;width:80px;height:80px;border-radius:50%;background:var(--accClr,var(--acc));opacity:.14;filter:blur(8px)}
+.stat-card .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+.stat-card .val{font-size:30px;font-weight:800;margin-top:6px;line-height:1}
 
-/* Server Cards */
-.srv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-.srv-name{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700}
-.badge{padding:4px 8px;border-radius:6px;font-size:11px;font-weight:700;text-transform:uppercase}
-.b-iran{background:color-mix(in srgb,var(--succ) 15%,transparent);color:var(--succ);border:1px solid color-mix(in srgb,var(--succ) 30%,transparent)}
-.b-kharej{background:color-mix(in srgb,var(--acc2) 15%,transparent);color:var(--acc2);border:1px solid color-mix(in srgb,var(--acc2) 30%,transparent)}
-.srv-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
-.stat{background:var(--bg2);padding:10px;border-radius:10px;font-size:12px}
-.stat span{display:block;color:var(--mut);margin-bottom:4px}
-.stat b{font-size:14px}
-.srv-actions{display:flex;gap:8px;margin-top:16px}
-.srv-actions .btn{flex:1;justify-content:center;padding:8px}
+.tabs{display:flex;gap:6px;background:var(--card);border:1px solid var(--brd);padding:6px;border-radius:14px;margin-bottom:22px;backdrop-filter:blur(12px);width:fit-content;flex-wrap:wrap}
+.tab{padding:9px 20px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;color:var(--mut);transition:.18s}
+.tab:hover{color:var(--text)}
+.tab.active{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04121a}
 
-/* Tunnel Cards */
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:14px}
+.header h2{font-size:22px;font-weight:800;letter-spacing:-.4px}
+.refreshing{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:18px}
+.card{background:var(--card);border:1px solid var(--brd);border-radius:18px;padding:20px;backdrop-filter:blur(18px) saturate(150%);transition:.2s;box-shadow:var(--shadow)}
+.card:hover{border-color:color-mix(in srgb,var(--acc) 35%,transparent);transform:translateY(-3px)}
+
+.srv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.srv-name{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700}
+.badge{padding:3px 9px;border-radius:7px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+.b-iran{background:color-mix(in srgb,var(--succ) 16%,transparent);color:var(--succ)}
+.b-kharej{background:color-mix(in srgb,var(--acc2) 18%,transparent);color:var(--acc2)}
+.ip-line{font-size:12px;color:var(--mut);margin-bottom:16px;font-family:ui-monospace,monospace}
+.srv-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stat{background:var(--bg2);padding:11px 12px;border-radius:11px;border:1px solid var(--brd2)}
+.stat span{display:block;color:var(--mut);font-size:11px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
+.stat b{font-size:14px;font-weight:700}
+.srv-actions{display:flex;gap:8px}
+.srv-actions .btn{flex:1;justify-content:center}
+.online{color:var(--succ);font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px}
+.offline{color:var(--err);font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px}
+.pulse{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 0 currentColor;animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,currentColor 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}}
+
 .tun-card{border-left:4px solid var(--acc2)}
 .tun-card.running{border-left-color:var(--succ)}
 .tun-card.stopped{border-left-color:var(--err)}
-.tun-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.tun-title{font-weight:600;font-family:monospace;font-size:14px}
-.tun-status{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
-.dot{width:8px;height:8px;border-radius:50%}
-.running .dot{background:var(--succ);box-shadow:0 0 8px var(--succ)}
+.tun-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px}
+.tun-title{font-weight:700;font-family:ui-monospace,monospace;font-size:13px;word-break:break-all}
+.tun-status{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%}
+.running .dot{background:var(--succ);box-shadow:0 0 10px var(--succ)}
+.running .tun-status{color:var(--succ)}
 .stopped .dot{background:var(--err)}
-.tun-info{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut);margin-bottom:16px}
-.tun-info div{display:flex;align-items:center;gap:4px;background:var(--bg2);padding:4px 8px;border-radius:6px}
+.stopped .tun-status{color:var(--err)}
+.tun-info{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--mut);margin-bottom:16px}
+.tun-info div{display:flex;align-items:center;gap:5px;background:var(--bg2);padding:5px 9px;border-radius:8px;border:1px solid var(--brd2)}
 
-/* Modals */
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.2s}
+.modal{position:fixed;inset:0;background:rgba(2,6,15,.65);backdrop-filter:blur(6px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;pointer-events:none;transition:.2s}
 .modal.show{opacity:1;pointer-events:auto}
-.m-box{background:var(--bg);border:1px solid var(--brd);border-radius:20px;width:100%;max-width:500px;max-height:90vh;display:flex;flex-direction:column;transform:scale(.95);transition:.2s}
-.modal.show .m-box{transform:scale(1)}
-.m-head{padding:20px;border-bottom:1px solid var(--brd);display:flex;justify-content:space-between;align-items:center}
-.m-head h3{font-size:18px}
-.m-close{background:none;border:none;color:var(--mut);cursor:pointer}
+.m-box{background:var(--card-solid);border:1px solid var(--brd);border-radius:22px;width:100%;max-width:520px;max-height:92vh;display:flex;flex-direction:column;transform:scale(.96) translateY(8px);transition:.2s;box-shadow:var(--shadow);overflow:hidden}
+.modal.show .m-box{transform:scale(1) translateY(0)}
+.m-head{padding:20px 22px;border-bottom:1px solid var(--brd);display:flex;justify-content:space-between;align-items:center}
+.m-head h3{font-size:18px;font-weight:800}
+.m-close{background:none;border:none;color:var(--mut);cursor:pointer;display:grid;place-items:center}
 .m-close:hover{color:var(--text)}
-.m-body{padding:20px;overflow-y:auto}
-.m-foot{padding:20px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:12px}
+.m-body{padding:22px;overflow-y:auto}
+.m-foot{padding:18px 22px;border-top:1px solid var(--brd);display:flex;justify-content:flex-end;gap:12px}
 
-.field{margin-bottom:16px}
-.field label{display:block;font-size:12px;font-weight:600;color:var(--mut);margin-bottom:6px}
-.field input,.field select{width:100%;padding:10px 14px;background:var(--bg2);border:1px solid var(--brd);color:var(--text);border-radius:10px;outline:none}
-.field input:focus,.field select:focus{border-color:var(--acc)}
+.field{margin-bottom:15px}
+.field label{display:block;font-size:12px;font-weight:700;color:var(--mut);margin-bottom:7px}
+.field input,.field select{width:100%;padding:11px 14px;background:var(--bg2);border:1px solid var(--brd);color:var(--text);border-radius:11px;outline:none;font-size:14px;transition:.16s}
+.field input:focus,.field select:focus{border-color:var(--acc);box-shadow:var(--ring)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.input-group{display:flex;gap:8px}
+.input-group input{flex:1}
 
-.term{background:#000;color:#0f0;font-family:monospace;padding:16px;border-radius:12px;overflow-x:auto;font-size:13px;line-height:1.5;max-height:400px;overflow-y:auto;white-space:pre-wrap}
+.port-row{display:grid;grid-template-columns:1fr auto 1fr auto;align-items:center;gap:8px;margin-bottom:10px}
+.port-row .arrow{color:var(--mut);font-weight:800}
+.port-row input{width:100%;padding:10px 12px;background:var(--bg2);border:1px solid var(--brd);color:var(--text);border-radius:10px;outline:none;font-size:14px}
+.port-row input:focus{border-color:var(--acc);box-shadow:var(--ring)}
+.rm-row{width:38px;height:38px;border-radius:10px;border:1px solid color-mix(in srgb,var(--err) 30%,transparent);background:color-mix(in srgb,var(--err) 10%,transparent);color:var(--err);cursor:pointer;display:grid;place-items:center}
+.rm-row:hover{background:var(--err);color:#fff}
+.add-row{margin-top:4px;font-size:13px}
+.hint{font-size:11px;color:var(--mut);margin-top:6px}
 
-#toast{position:fixed;bottom:24px;right:24px;background:var(--card);backdrop-filter:blur(10px);border:1px solid var(--brd);padding:12px 20px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.3);transform:translateY(100px);opacity:0;transition:.3s cubic-bezier(.2,.8,.2,1);z-index:9999;display:flex;align-items:center;gap:10px;font-weight:500}
-#toast.show{transform:translateY(0);opacity:1}
+.term{background:#05080f;color:#5eead4;font-family:ui-monospace,monospace;padding:16px;border-radius:13px;overflow:auto;font-size:12.5px;line-height:1.55;max-height:55vh;white-space:pre-wrap;border:1px solid var(--brd)}
+textarea.code{width:100%;height:48vh;background:#05080f;color:#5eead4;font-family:ui-monospace,monospace;padding:14px;border-radius:13px;border:1px solid var(--brd);outline:none;font-size:13px;resize:vertical}
+textarea.code:focus{border-color:var(--acc)}
+
+#toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%,120px);background:var(--card-solid);backdrop-filter:blur(12px);border:1px solid var(--brd);padding:13px 22px;border-radius:13px;box-shadow:var(--shadow);opacity:0;transition:.3s cubic-bezier(.2,.85,.25,1);z-index:9999;display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;max-width:90vw}
+#toast.show{transform:translate(-50%,0);opacity:1}
 #toast.succ{border-left:4px solid var(--succ)}
 #toast.err{border-left:4px solid var(--err)}
 
-.tabs{display:flex;gap:4px;background:var(--bg2);padding:4px;border-radius:12px;margin-bottom:20px}
-.tab{flex:1;text-align:center;padding:8px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--mut)}
-.tab.active{background:var(--card);color:var(--text);box-shadow:0 2px 8px rgba(0,0,0,.2)}
-
-.loader{border:3px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:20px;height:20px;animation:spin 1s linear infinite}
+.loader{border:3px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:26px;height:26px;animation:spin .8s linear infinite;margin:30px auto}
+.mini-loader{border:2px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:14px;height:14px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:50px 20px;font-size:14px}
+@media(max-width:520px){.row2{grid-template-columns:1fr}.container{padding:16px}}
 </style>
 </head>
 <body>
-<div class="bg-glow"></div>
+<div class="aurora"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
 
 <nav>
   <div class="brand">
-    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 7l3-3m-3 3 3 3M20 17H4m16 0-3-3m3 3-3 3"/></svg></div>
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7h16M4 7l3-3m-3 3 3 3M20 17H4m16 0-3-3m3 3-3 3"/></svg></div>
     Backhaul Panel
   </div>
   <div class="nav-actions">
-    <button class="btn" onclick="openModal('m-settings')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
-    <button class="btn btn-danger" onclick="logout()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+    <button class="icon-btn" id="themeBtn" title="Toggle theme"></button>
+    <button class="icon-btn" onclick="openModal('m-settings')" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <button class="icon-btn danger" onclick="logout()" title="Logout"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
   </div>
 </nav>
 
 <div class="container">
+  <div class="stats">
+    <div class="stat-card" style="--accClr:var(--acc)"><div class="lbl">Servers</div><div class="val" id="st-srv">—</div></div>
+    <div class="stat-card" style="--accClr:var(--succ)"><div class="lbl">Online</div><div class="val" id="st-online">—</div></div>
+    <div class="stat-card" style="--accClr:var(--acc2)"><div class="lbl">Tunnels</div><div class="val" id="st-tun">—</div></div>
+    <div class="stat-card" style="--accClr:var(--acc3)"><div class="lbl">Running</div><div class="val" id="st-run">—</div></div>
+  </div>
+
   <div class="tabs">
     <div class="tab active" onclick="switchTab('servers',this)">Servers</div>
     <div class="tab" onclick="switchTab('tunnels',this)">Tunnels</div>
@@ -1582,112 +1707,108 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:16px 2
   <div id="tab-servers">
     <div class="header">
       <h2>Servers</h2>
-      <button class="btn btn-primary" onclick="openModal('m-add-server')">+ Add Server</button>
+      <button class="btn btn-primary" onclick="openModal('m-add-server')">＋ Add Server</button>
     </div>
-    <div class="grid" id="serversGrid"><div class="loader" style="margin:20px auto"></div></div>
+    <div class="grid" id="serversGrid"><div class="loader"></div></div>
   </div>
 
   <div id="tab-tunnels" style="display:none">
     <div class="header">
       <h2>Active Tunnels</h2>
-      <button class="btn" onclick="fetchTunnels()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Refresh</button>
+      <button class="btn" onclick="fetchTunnels(true)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Refresh</button>
     </div>
-    <div class="grid" id="tunnelsGrid"><div class="loader" style="margin:20px auto"></div></div>
+    <div class="grid" id="tunnelsGrid"><div class="loader"></div></div>
   </div>
 
   <div id="tab-create" style="display:none">
-    <div class="header"><h2>Create Matching Tunnel (Iran + Kharej)</h2></div>
-    <div class="card" style="max-width:800px;margin:0 auto">
+    <div class="header"><h2>Create Matching Tunnel (Iran ⇄ Kharej)</h2></div>
+    <div class="card" style="max-width:760px;box-shadow:var(--shadow)">
       <form id="createBothForm" onsubmit="createBothTunnel(event)">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-          <div>
-            <div class="field">
-              <label>Iran Server (Local)</label>
-              <select id="cb-iran" required></select>
-            </div>
-            <div class="field">
-              <label>Ports Mapping (Iran config)</label>
-              <input id="cb-ports" placeholder='e.g. "443=127.0.0.1:443" or "80=127.0.0.1:80"' required>
-            </div>
-          </div>
-          <div>
-            <div class="field">
-              <label>Kharej Server (Remote)</label>
-              <select id="cb-kharej" required></select>
-            </div>
-            <div class="field">
-              <label>Transport</label>
-              <select id="cb-trans"><option value="wssmux">WSSMUX (Recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select>
-            </div>
-            <div class="field">
-              <label>Tunnel Port</label>
-              <input id="cb-port" type="number" value="9743" required>
-            </div>
-            <div class="field">
-              <label>Custom Token (Leave blank for auto)</label>
-              <input id="cb-token" placeholder="Optional secure token">
-            </div>
+        <div class="row2">
+          <div class="field"><label>Iran Server (entry)</label><select id="cb-iran" required></select></div>
+          <div class="field"><label>Kharej Server (exit)</label><select id="cb-kharej" required></select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Transport</label><select id="cb-trans"><option value="wssmux">WSSMUX (recommended)</option><option value="wsmux">WSMUX</option><option value="tcpmux">TCPMUX</option><option value="tcp">TCP</option></select></div>
+          <div class="field"><label>Tunnel Port</label><input id="cb-port" type="number" value="9743" required></div>
+        </div>
+        <div class="field"><label>Custom Token <span style="color:var(--mut);font-weight:500">(blank = auto-generate)</span></label>
+          <div class="input-group">
+            <input id="cb-token" placeholder="Optional secure token">
+            <button type="button" class="btn btn-icon" title="Generate" onclick="genToken()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px" id="cb-btn">Create & Connect Tunnel</button>
+
+        <div class="field">
+          <label>Port Forwarding (Iran port → Kharej port)</label>
+          <div id="portRows"></div>
+          <button type="button" class="btn add-row" onclick="addPortRow()">＋ Add another port</button>
+          <div class="hint">Users connect to the <b>Iran port</b>; traffic is tunneled to the matching <b>Kharej port</b>. Add as many pairs as you need.</div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" id="cb-btn">Create &amp; Connect Tunnel</button>
       </form>
     </div>
   </div>
 </div>
 
-<!-- Modals -->
+<!-- Add Server Modal -->
 <div class="modal" id="m-add-server">
   <div class="m-box">
-    <div class="m-head"><h3>Add Server</h3><button class="m-close" onclick="closeModal('m-add-server')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="m-head"><h3>Add Server</h3><button class="m-close" onclick="closeModal('m-add-server')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
     <form onsubmit="addServer(event)">
       <div class="m-body">
-        <div class="field"><label>Server Name</label><input id="as-name" required placeholder="e.g. Tehran Datacenter"></div>
-        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
-          <div class="field"><label>IP Address / Domain</label><input id="as-ip" required placeholder="IP or 127.0.0.1"></div>
+        <div class="field"><label>Server Name</label><input id="as-name" required placeholder="e.g. Tehran DC"></div>
+        <div class="row2">
+          <div class="field"><label>IP / Domain</label><input id="as-ip" required placeholder="IP or 127.0.0.1"></div>
           <div class="field"><label>Role</label><select id="as-role"><option value="iran">Iran</option><option value="kharej">Kharej</option></select></div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="row2">
           <div class="field"><label>SSH User</label><input id="as-user" value="root"></div>
           <div class="field"><label>SSH Port</label><input id="as-port" type="number" value="22"></div>
         </div>
-        <div class="field"><label>SSH Password (or empty if using key)</label><input id="as-pass" type="password"></div>
-        <div class="field"><label>SSH Key (Optional absolute path)</label><input id="as-key" placeholder="/root/.ssh/id_rsa"></div>
+        <div class="field"><label>SSH Password <span style="color:var(--mut);font-weight:500">(or use key below)</span></label><input id="as-pass" type="password"></div>
+        <div class="field"><label>SSH Key path <span style="color:var(--mut);font-weight:500">(optional)</span></label><input id="as-key" placeholder="/root/.ssh/id_rsa"></div>
       </div>
       <div class="m-foot">
         <button type="button" class="btn" onclick="closeModal('m-add-server')">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save Server</button>
+        <button type="submit" class="btn btn-primary" id="as-btn">Save Server</button>
       </div>
     </form>
   </div>
 </div>
 
+<!-- Logs Modal -->
 <div class="modal" id="m-term">
-  <div class="m-box" style="max-width:800px">
-    <div class="m-head"><h3 id="term-title">Logs</h3><button class="m-close" onclick="closeModal('m-term')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-    <div class="m-body"><div class="term" id="term-out">Loading...</div></div>
+  <div class="m-box" style="max-width:820px">
+    <div class="m-head"><h3 id="term-title">Logs</h3><button class="m-close" onclick="closeModal('m-term')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="m-body"><div class="term" id="term-out">Loading…</div></div>
   </div>
 </div>
 
+<!-- Config Editor Modal -->
 <div class="modal" id="m-edit">
-  <div class="m-box" style="max-width:800px">
-    <div class="m-head"><h3 id="edit-title">Edit Config</h3><button class="m-close" onclick="closeModal('m-edit')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-    <div class="m-body"><textarea id="edit-text" style="width:100%;height:350px;background:#000;color:#0f0;font-family:monospace;padding:12px;border-radius:8px;border:none" spellcheck="false"></textarea></div>
+  <div class="m-box" style="max-width:820px">
+    <div class="m-head"><h3 id="edit-title">Config</h3><button class="m-close" onclick="closeModal('m-edit')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="m-body"><textarea id="edit-text" class="code" spellcheck="false"></textarea></div>
     <div class="m-foot">
       <button class="btn" onclick="closeModal('m-edit')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveConfig()">Save & Restart</button>
+      <button class="btn btn-primary" onclick="saveConfig()">Save &amp; Restart</button>
     </div>
   </div>
 </div>
 
+<!-- Settings Modal -->
 <div class="modal" id="m-settings">
   <div class="m-box">
-    <div class="m-head"><h3>Settings</h3><button class="m-close" onclick="closeModal('m-settings')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="m-head"><h3>Settings</h3><button class="m-close" onclick="closeModal('m-settings')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
     <form onsubmit="saveSettings(event)">
       <div class="m-body">
         <div class="field"><label>Admin Username</label><input id="set-u" required></div>
-        <div class="field"><label>New Password</label><input id="set-p" type="password" placeholder="Leave empty to keep current"></div>
+        <div class="field"><label>New Password <span style="color:var(--mut);font-weight:500">(blank = keep current)</span></label><input id="set-p" type="password" placeholder="••••••••"></div>
+        <div class="hint">Changing credentials signs out all active sessions.</div>
       </div>
-      <div class="m-foot"><button type="submit" class="btn btn-primary">Update Settings</button></div>
+      <div class="m-foot"><button type="submit" class="btn btn-primary">Update</button></div>
     </form>
   </div>
 </div>
@@ -1695,233 +1816,222 @@ nav{display:flex;align-items:center;justify-content:space-between;padding:16px 2
 <div id="toast"></div>
 
 <script>
+/* ---------- Theme ---------- */
+const SUN='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const MOON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
+function applyTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('bh_theme',t);document.getElementById('themeBtn').innerHTML=t==='dark'?SUN:MOON;}
+applyTheme(localStorage.getItem('bh_theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'));
+document.getElementById('themeBtn').onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
+
+/* ---------- Helpers ---------- */
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async(path,body=null)=>{
   const opt=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};
   const r=await fetch(path,opt);
   if(r.status===401){location.href='/login.html';return null;}
   const d=await r.json();
-  if(!d.success&&d.error) throw new Error(d.error);
+  if(d&&d.success===false&&d.error) throw new Error(d.error);
   return d;
 };
+let toastTimer;
 const showToast=(msg,isErr=false)=>{
-  const t=document.getElementById('toast');
-  t.textContent=msg;t.className='show '+(isErr?'err':'succ');
-  setTimeout(()=>t.className='',3000);
+  const t=$('toast');t.textContent=msg;t.className='show '+(isErr?'err':'succ');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='',3200);
 };
 
-let SERVERS=[];
-let editSvc='',editSid='';
+let SERVERS=[],editSvc='',editSid='';
 
-function openModal(id){document.getElementById(id).classList.add('show');}
-function closeModal(id){document.getElementById(id).classList.remove('show');}
+function openModal(id){$(id).classList.add('show');}
+function closeModal(id){$(id).classList.remove('show');}
 document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)this.classList.remove('show')}));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal.show').forEach(m=>m.classList.remove('show'))});
 
 function switchTab(id,el){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  ['servers','tunnels','create'].forEach(t=>document.getElementById('tab-'+t).style.display='none');
-  document.getElementById('tab-'+id).style.display='block';
+  ['servers','tunnels','create'].forEach(t=>$('tab-'+t).style.display='none');
+  $('tab-'+id).style.display='block';
   if(id==='servers')fetchServers();
   if(id==='tunnels')fetchTunnels();
+  if(id==='create')populateServerSelects();
 }
 
+/* ---------- Servers ---------- */
+function populateServerSelects(){
+  const s1=$('cb-iran'),s2=$('cb-kharej');
+  s1.innerHTML='';s2.innerHTML='';
+  SERVERS.forEach(s=>{
+    const opt=`<option value="${s.id}">${esc(s.name)} (${esc(s.ip)})</option>`;
+    if(s.role==='kharej') s2.innerHTML+=opt; else s1.innerHTML+=opt;
+  });
+}
 async function fetchServers(){
   try{
-    const d=await api('/api/servers');
-    SERVERS=d.servers;
-    const g=document.getElementById('serversGrid');
-    g.innerHTML='';
-    const s1=document.getElementById('cb-iran'),s2=document.getElementById('cb-kharej');
-    s1.innerHTML='';s2.innerHTML='';
-    
-    SERVERS.forEach(s=>{
-      if(s.role==='iran') s1.innerHTML+=`<option value="${s.id}">${s.name} (${s.ip})</option>`;
-      else s2.innerHTML+=`<option value="${s.id}">${s.name} (${s.ip})</option>`;
-      
+    const d=await api('/api/servers'); if(!d)return;
+    SERVERS=d.servers||[];
+    $('st-srv').textContent=SERVERS.length;
+    $('st-online').textContent=SERVERS.filter(s=>s.ssh_ok).length;
+    populateServerSelects();
+    const g=$('serversGrid');
+    if(!SERVERS.length){g.innerHTML='<div class="empty">No servers yet. Click “Add Server” to begin.</div>';return;}
+    g.innerHTML=SERVERS.map(s=>{
       const badge=s.role==='iran'?'<span class="badge b-iran">IRAN</span>':'<span class="badge b-kharej">KHAREJ</span>';
-      const stat=s.ssh_ok?'<span style="color:var(--succ);font-size:12px">● Online</span>':'<span style="color:var(--err);font-size:12px">● Offline</span>';
-      
-      g.innerHTML+=`
-        <div class="card">
-          <div class="srv-head">
-            <div class="srv-name">${s.name} ${badge}</div>
-            ${stat}
-          </div>
-          <div style="font-size:12px;color:var(--mut);margin-bottom:16px;font-family:monospace">${s.ip}</div>
-          <div class="srv-stats">
-            <div class="stat"><span>CPU Load</span><b>${s.load||'-'}</b></div>
-            <div class="stat"><span>Memory</span><b>${s.memory||'-'}</b></div>
-            <div class="stat"><span>Binary</span><b>${s.version||'-'}</b></div>
-            <div class="stat"><span>Uptime</span><b>${s.uptime||'-'}</b></div>
-          </div>
-          <div class="srv-actions">
-            <button class="btn" onclick="installBin('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Install Bin</button>
-            <button class="btn btn-danger" onclick="delServer('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-          </div>
+      const stat=s.ssh_ok?'<span class="online"><span class="pulse"></span>Online</span>':'<span class="offline"><span class="pulse"></span>Offline</span>';
+      return `<div class="card">
+        <div class="srv-head"><div class="srv-name">${esc(s.name)} ${badge}</div>${stat}</div>
+        <div class="ip-line">${esc(s.ip)} · ${esc(s.ssh_user||'root')}</div>
+        <div class="srv-stats">
+          <div class="stat"><span>CPU Load</span><b>${esc(s.load||'—')}</b></div>
+          <div class="stat"><span>Memory</span><b>${esc(s.memory||'—')}</b></div>
+          <div class="stat"><span>Binary</span><b>${esc(s.version||'—')}</b></div>
+          <div class="stat"><span>Uptime</span><b>${esc(s.uptime||'—')}</b></div>
         </div>
-      `;
-    });
+        <div class="srv-actions">
+          <button class="btn" onclick="installBin('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Install</button>
+          <button class="btn btn-danger btn-icon" onclick="delServer('${s.id}','${esc(s.name)}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        </div></div>`;
+    }).join('');
   }catch(e){showToast(e.message,true)}
 }
-
 async function addServer(e){
   e.preventDefault();
-  const b={
-    name:document.getElementById('as-name').value,
-    ip:document.getElementById('as-ip').value,
-    role:document.getElementById('as-role').value,
-    ssh_user:document.getElementById('as-user').value,
-    ssh_port:document.getElementById('as-port').value,
-    ssh_password:document.getElementById('as-pass').value,
-    ssh_key:document.getElementById('as-key').value
-  };
+  const btn=$('as-btn');btn.disabled=true;
   try{
-    await api('/api/server/add',b);
-    closeModal('m-add-server');
-    showToast('Server added successfully');
-    fetchServers();
-  }catch(ex){showToast(ex.message,true)}
-}
-
-async function delServer(id){
-  if(!confirm('Delete this server?'))return;
-  try{
-    await api('/api/server/delete',{id});
-    showToast('Server deleted');
-    fetchServers();
-  }catch(e){showToast(e.message,true)}
-}
-
-async function installBin(id){
-  if(!confirm('Install/Update Backhaul binary on this server?'))return;
-  showToast('Installing binary... please wait');
-  try{
-    const r=await api('/api/install/binary',{server_id:id});
-    showToast(`Binary installed: ${r.version}`);
-    fetchServers();
-  }catch(e){showToast(e.message,true)}
-}
-
-async function fetchTunnels(){
-  try{
-    const d=await api('/api/tunnels');
-    const g=document.getElementById('tunnelsGrid');
-    g.innerHTML='';
-    if(!d.tunnels.length) g.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--mut);padding:40px">No active tunnels found.</div>';
-    
-    d.tunnels.forEach(t=>{
-      const cClass=t.status==='running'?'running':'stopped';
-      g.innerHTML+=`
-        <div class="card tun-card ${cClass}">
-          <div class="tun-head">
-            <div class="tun-title">${t.server_name} <span style="color:var(--mut)">→</span> ${t.service.replace('backhaul-','').replace('.service','')}</div>
-            <div class="tun-status"><div class="dot"></div>${t.status.toUpperCase()}</div>
-          </div>
-          <div class="tun-info">
-            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${t.uptime}</div>
-            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> ${t.cpu} CPU</div>
-            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg> ${t.memory} RAM</div>
-            <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M7 3.34V5a3 3 0 0 0 3 3v0a2 2 0 0 1 2 2v0c0 1.1.9 2 2 2v0a2 2 0 0 0 2-2v0c0-1.1.9-2 2-2h3.17M11 21.95V18a2 2 0 0 0-2-2v0a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/><circle cx="12" cy="12" r="10"/></svg> ${t.transport.toUpperCase()}</div>
-          </div>
-          <div class="srv-actions">
-            <button class="btn" onclick="tunAction('${t.service}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
-            <button class="btn" onclick="tunAction('${t.service}','${t.server_id}','stop')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg></button>
-            <button class="btn" onclick="showLogs('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/></svg></button>
-            <button class="btn" onclick="editConf('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-            <button class="btn btn-danger" onclick="delTun('${t.service}','${t.server_id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-          </div>
-        </div>
-      `;
+    await api('/api/server/add',{
+      name:$('as-name').value,ip:$('as-ip').value,role:$('as-role').value,
+      ssh_user:$('as-user').value,ssh_port:parseInt($('as-port').value)||22,
+      ssh_password:$('as-pass').value,ssh_key:$('as-key').value
     });
-  }catch(e){showToast(e.message,true)}
+    closeModal('m-add-server');showToast('Server added');
+    e.target.reset();$('as-user').value='root';$('as-port').value='22';
+    fetchServers();
+  }catch(ex){showToast(ex.message,true)}finally{btn.disabled=false}
+}
+async function delServer(id,name){
+  if(!confirm('Delete server "'+name+'"?'))return;
+  try{await api('/api/server/delete',{id});showToast('Server deleted');fetchServers();}catch(e){showToast(e.message,true)}
+}
+async function installBin(id){
+  if(!confirm('Install / update the Backhaul binary on this server?'))return;
+  showToast('Installing binary…');
+  try{const r=await api('/api/install/binary',{server_id:id});showToast('Binary installed: '+(r.version||'done'));fetchServers();}
+  catch(e){showToast(e.message,true)}
 }
 
-async function tunAction(svc,sid,act){
+/* ---------- Tunnels ---------- */
+async function fetchTunnels(force){
   try{
-    await api('/api/tunnel/action',{service:svc,server_id:sid,action:act});
-    showToast(`Tunnel ${act}ed`);
-    fetchTunnels();
+    const d=await api('/api/tunnels'); if(!d)return;
+    const tuns=d.tunnels||[];
+    $('st-tun').textContent=tuns.length;
+    $('st-run').textContent=tuns.filter(t=>t.status==='running').length;
+    const g=$('tunnelsGrid');
+    if(!tuns.length){g.innerHTML='<div class="empty">No active tunnels. Use “New Tunnel” to create one.</div>';return;}
+    g.innerHTML=tuns.map(t=>{
+      const cls=t.status==='running'?'running':'stopped';
+      const short=t.service.replace('backhaul-','').replace('.service','');
+      const cron=t.cron_active?`<div title="Auto-restart"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(t.cron_interval)}m</div>`:'';
+      return `<div class="card tun-card ${cls}">
+        <div class="tun-head">
+          <div class="tun-title">${esc(t.server_name)} <span style="color:var(--mut)">›</span> ${esc(short)}</div>
+          <div class="tun-status"><div class="dot"></div>${t.status.toUpperCase()}</div>
+        </div>
+        <div class="tun-info">
+          <div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> ${esc(t.uptime)}</div>
+          <div>CPU ${esc(t.cpu)}</div>
+          <div>RAM ${esc(t.memory)}</div>
+          <div>${esc((t.transport||'').toUpperCase())}</div>
+          ${cron}
+        </div>
+        <div class="srv-actions">
+          <button class="btn btn-icon" title="${t.status==='running'?'Restart':'Start'}" onclick="tunAction('${esc(t.service)}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+          <button class="btn btn-icon" title="Stop" onclick="tunAction('${esc(t.service)}','${t.server_id}','stop')"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+          <button class="btn btn-icon" title="Logs" onclick="showLogs('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H3m18 8H8m13 8H3"/></svg></button>
+          <button class="btn btn-icon" title="Edit config" onclick="editConf('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+          <button class="btn btn-danger btn-icon" title="Delete" onclick="delTun('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        </div></div>`;
+    }).join('');
   }catch(e){showToast(e.message,true)}
 }
-
+async function tunAction(svc,sid,act){
+  try{await api('/api/tunnel/action',{service:svc,server_id:sid,action:act});showToast('Tunnel '+act+'ed');fetchTunnels();}
+  catch(e){showToast(e.message,true)}
+}
 async function delTun(svc,sid){
   if(!confirm('Permanently delete this tunnel?'))return;
-  try{
-    await api('/api/tunnel/delete',{service:svc,server_id:sid});
-    showToast('Tunnel deleted');
-    fetchTunnels();
-  }catch(e){showToast(e.message,true)}
+  try{await api('/api/tunnel/delete',{service:svc,server_id:sid});showToast('Tunnel deleted');fetchTunnels();}
+  catch(e){showToast(e.message,true)}
 }
-
 async function showLogs(svc,sid){
-  document.getElementById('term-title').textContent=`Logs: ${svc}`;
-  document.getElementById('term-out').textContent='Loading logs...';
-  openModal('m-term');
-  try{
-    const r=await api(`/api/tunnel/logs?svc=${svc}&server_id=${sid}`);
-    document.getElementById('term-out').textContent=r.logs||'No logs found.';
-    document.getElementById('term-out').scrollTop=document.getElementById('term-out').scrollHeight;
-  }catch(e){document.getElementById('term-out').textContent='Error: '+e.message}
+  $('term-title').textContent='Logs · '+svc;$('term-out').textContent='Loading…';openModal('m-term');
+  try{const r=await api('/api/tunnel/logs?svc='+encodeURIComponent(svc)+'&server_id='+sid);
+    $('term-out').textContent=r.logs||'No logs found.';$('term-out').scrollTop=$('term-out').scrollHeight;}
+  catch(e){$('term-out').textContent='Error: '+e.message}
 }
-
 async function editConf(svc,sid){
-  editSvc=svc;editSid=sid;
-  document.getElementById('edit-title').textContent=`Config: ${svc}`;
-  document.getElementById('edit-text').value='Loading...';
-  openModal('m-edit');
-  try{
-    const r=await api(`/api/tunnel/config?svc=${svc}&server_id=${sid}`);
-    document.getElementById('edit-text').value=r.config||'';
-  }catch(e){document.getElementById('edit-text').value='Error: '+e.message}
+  editSvc=svc;editSid=sid;$('edit-title').textContent='Config · '+svc;$('edit-text').value='Loading…';openModal('m-edit');
+  try{const r=await api('/api/tunnel/config?svc='+encodeURIComponent(svc)+'&server_id='+sid);$('edit-text').value=r.config||'';}
+  catch(e){$('edit-text').value='Error: '+e.message}
 }
-
 async function saveConfig(){
-  try{
-    await api('/api/tunnel/save_config',{service:editSvc,server_id:editSid,config:document.getElementById('edit-text').value});
-    closeModal('m-edit');
-    showToast('Config saved and tunnel restarted');
-    fetchTunnels();
-  }catch(e){showToast(e.message,true)}
+  try{await api('/api/tunnel/save_config',{service:editSvc,server_id:editSid,config:$('edit-text').value});
+    closeModal('m-edit');showToast('Config saved · tunnel restarted');fetchTunnels();}
+  catch(e){showToast(e.message,true)}
 }
 
+/* ---------- Create Tunnel ---------- */
+function addPortRow(iran,kharej){
+  const div=document.createElement('div');div.className='port-row';
+  div.innerHTML=`<input type="number" class="pr-iran" placeholder="Iran port" value="${iran||''}">
+    <span class="arrow">→</span>
+    <input type="number" class="pr-kharej" placeholder="Kharej port" value="${kharej||''}">
+    <button type="button" class="rm-row" onclick="this.parentElement.remove()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`;
+  $('portRows').appendChild(div);
+}
+function buildPorts(){
+  const rules=[];
+  document.querySelectorAll('#portRows .port-row').forEach(r=>{
+    const i=r.querySelector('.pr-iran').value.trim(),k=r.querySelector('.pr-kharej').value.trim();
+    if(i&&k) rules.push('"'+i+'=127.0.0.1:'+k+'"');
+  });
+  return rules.join(',');
+}
+async function genToken(){
+  try{const r=await api('/api/token/generate');if(r&&r.token)$('cb-token').value=r.token;}catch(e){}
+}
 async function createBothTunnel(e){
   e.preventDefault();
-  const btn=document.getElementById('cb-btn');
-  btn.disabled=true;btn.textContent='Creating...';
+  const ports=buildPorts();
+  if(!ports){showToast('Add at least one Iran→Kharej port pair',true);return;}
+  const btn=$('cb-btn');btn.disabled=true;btn.textContent='Creating…';
   try{
-    const b={
-      iran_server:{id:document.getElementById('cb-iran').value},
-      kharej_server:{id:document.getElementById('cb-kharej').value},
-      transport:document.getElementById('cb-trans').value,
-      port:document.getElementById('cb-port').value,
-      ports:document.getElementById('cb-ports').value,
-      token:document.getElementById('cb-token').value
-    };
-    await api('/api/tunnel/create-both',b);
-    showToast('Tunnel created successfully on both servers!');
-    document.getElementById('createBothForm').reset();
+    await api('/api/tunnel/create-both',{
+      iran_server:{id:$('cb-iran').value},kharej_server:{id:$('cb-kharej').value},
+      transport:$('cb-trans').value,port:$('cb-port').value,ports:ports,token:$('cb-token').value
+    });
+    showToast('Tunnel created on both servers!');
+    $('createBothForm').reset();$('cb-port').value='9743';$('portRows').innerHTML='';addPortRow();
     switchTab('tunnels',document.querySelectorAll('.tab')[1]);
   }catch(ex){showToast(ex.message,true)}
   finally{btn.disabled=false;btn.textContent='Create & Connect Tunnel';}
 }
 
+/* ---------- Settings ---------- */
 async function saveSettings(e){
   e.preventDefault();
-  try{
-    await api('/api/settings/update',{username:document.getElementById('set-u').value,password:document.getElementById('set-p').value});
-    closeModal('m-settings');
-    showToast('Settings updated. Please login again.');
-    setTimeout(()=>location.reload(),1000);
-  }catch(ex){showToast(ex.message,true)}
+  try{await api('/api/settings/update',{username:$('set-u').value,password:$('set-p').value});
+    closeModal('m-settings');showToast('Settings updated · signing out…');setTimeout(()=>location.reload(),1100);}
+  catch(ex){showToast(ex.message,true)}
 }
+async function logout(){try{await api('/api/auth/logout',{});}catch(e){}location.href='/login.html';}
 
-async function logout(){
-  try{await api('/api/auth/logout',{});location.href='/login.html'}catch(e){}
-}
-
-// Init
-api('/api/settings/get').then(d=>{if(d&&d.username)document.getElementById('set-u').value=d.username});
+/* ---------- Init ---------- */
+addPortRow(443,443);
+api('/api/settings/get').then(d=>{if(d&&d.username)$('set-u').value=d.username});
 fetchServers();
+fetchTunnels();
+setInterval(()=>{const t=document.querySelector('#tab-servers');if(t&&t.style.display!=='none')fetchServers();const u=document.querySelector('#tab-tunnels');if(u&&u.style.display!=='none')fetchTunnels();},15000);
 </script>
 </body>
 </html>
@@ -1959,7 +2069,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.7.0")
+    print("  BackhaulManager Web Panel v2.8.0")
     print("  Multi-Server Edition by emad1381")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")

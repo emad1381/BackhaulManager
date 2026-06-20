@@ -2264,13 +2264,25 @@ PY
 }
 
 # Generate a self-signed certificate for the panel (HTTPS without a domain).
+# Includes the server IP as a SAN so the cert is technically valid for that IP
+# (browsers still warn because the CA is not trusted - unavoidable without a domain).
 _generate_panel_selfsigned() {
+    local cn="${1:-backhaul-panel}"
     mkdir -p "$CERT_DIR"
-    if [[ ! -f "$CERT_DIR/panel.crt" || ! -f "$CERT_DIR/panel.key" ]]; then
-        info "Generating self-signed certificate for the Web Panel..."
+    # Always (re)generate so the SAN matches the current IP/domain.
+    rm -f "$CERT_DIR/panel.crt" "$CERT_DIR/panel.key" 2>/dev/null
+    info "Generating self-signed certificate for the Web Panel (CN=${cn})..."
+    local san="DNS:${cn}"
+    if [[ "$cn" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        san="IP:${cn}"
+    fi
+    if ! openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/panel.key" \
+        -out "$CERT_DIR/panel.crt" -days 3650 -nodes \
+        -subj "/CN=${cn}" -addext "subjectAltName=${san}" >/dev/null 2>&1; then
+        # Fallback for older openssl without -addext support.
         if ! openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/panel.key" \
             -out "$CERT_DIR/panel.crt" -days 3650 -nodes \
-            -subj "/CN=backhaul-panel" >/dev/null 2>&1; then
+            -subj "/CN=${cn}" >/dev/null 2>&1; then
             warn "openssl failed. Could not create self-signed certificate."
             return 1
         fi
@@ -2384,15 +2396,18 @@ _configure_webpanel() {
             ssl_enabled="true"
         else
             warn "Falling back to a self-signed certificate so HTTPS still works."
-            if _generate_panel_selfsigned; then
+            if _generate_panel_selfsigned "$domain"; then
                 ssl_enabled="true"; cert_path="$CERT_DIR/panel.crt"; key_path="$CERT_DIR/panel.key"
             fi
         fi
     else
+        warn "Note: a free trusted certificate (Let's Encrypt) requires a DOMAIN."
+        warn "With a bare IP you can only use a self-signed cert, so the browser"
+        warn "will show a one-time 'Not secure' warning - the traffic is still encrypted."
         prompt "Enable HTTPS with a self-signed certificate anyway (recommended)? [Y/n]:"
         read -r use_self
         if [[ ! "$use_self" =~ ^[Nn]$ ]]; then
-            if _generate_panel_selfsigned; then
+            if _generate_panel_selfsigned "$ip"; then
                 ssl_enabled="true"; cert_path="$CERT_DIR/panel.crt"; key_path="$CERT_DIR/panel.key"
             fi
         fi
