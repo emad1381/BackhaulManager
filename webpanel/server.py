@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.0 (centered paired UI + inline preset switch)
+Version: 2.11.1 (async preset switch - fixes "failed to fetch")
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -331,6 +331,65 @@ def build_cron_expr(minutes):
         return "0 0 * * *" if h >= 24 else f"0 */{h} * * *"
     h = max(1, round(m / 60))
     return "0 0 * * *" if h >= 24 else f"0 */{h} * * *"
+
+# ----- Preset-switch background jobs ----------------------------------------
+# Re-applying a preset rebuilds + restarts BOTH ends over SSH, which can take a
+# few seconds and briefly drop the very connection the panel is reached through.
+# Doing it synchronously made the browser show "Failed to fetch" even though the
+# change succeeded. So we ACK instantly with a job id, do the work in a daemon
+# thread, and let the client poll /api/tunnel/preset-status for the result.
+_PRESET_JOBS = {}
+_PRESET_JOBS_LOCK = threading.Lock()
+
+def _apply_preset_to_end(end, preset, servers_data):
+    svc = end.get("service", "")
+    sid = end.get("server_id", "")
+    if not is_safe_svc(svc):
+        return {"service": svc, "success": False, "error": "invalid service name"}
+    srv = next((s for s in servers_data.get("servers", []) if s.get("id") == sid), None)
+    if not srv:
+        return {"service": svc, "success": False, "error": "server not found"}
+    name = svc.replace("backhaul-", "").replace(".service", "")
+    mm = _re.match(r"^(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-(\d+)$", name)
+    if not mm:
+        return {"service": svc, "success": False, "error": "cannot parse service name"}
+    role, transport, port = mm.group(1), mm.group(2), mm.group(3)
+    cfg_path = f"{INSTALL_DIR}/{role}-{transport}-{port}.toml"
+    cfg_text, _ = remote_exec(srv, f"cat {cfg_path} 2>/dev/null")
+    cfg_text = cfg_text or ""
+    tok_m = _re.search(r'token\s*=\s*"([^"]*)"', cfg_text)
+    params = {"role": role, "transport": transport, "port": port,
+              "token": tok_m.group(1) if tok_m else "", "preset": preset}
+    if role == "kharej":
+        ra = _re.search(r'remote_addr\s*=\s*"([^"]+):\d+"', cfg_text)
+        if ra:
+            params["iran_ip"] = ra.group(1)
+    else:
+        pm = _re.search(r'ports\s*=\s*\[(.*?)\]', cfg_text, _re.S)
+        if pm:
+            params["ports"] = pm.group(1).strip()
+    try:
+        res = create_tunnel_on_server(srv, params)
+    except Exception as e:
+        return {"service": svc, "success": False, "error": str(e)}
+    invalidate_cache(sid)
+    return {"service": svc, "success": bool(res.get("success")), "error": res.get("error"),
+            "server": srv.get("name", "")}
+
+def _run_preset_job(job_id, preset, ends, servers_data):
+    results = []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            futs = [ex.submit(_apply_preset_to_end, e, preset, servers_data) for e in ends]
+            for f in concurrent.futures.as_completed(futs):
+                results.append(f.result())
+    except Exception as e:
+        results.append({"success": False, "error": str(e)})
+    ok = bool(results) and all(r.get("success") for r in results)
+    invalidate_cache()
+    with _PRESET_JOBS_LOCK:
+        _PRESET_JOBS[job_id] = {"done": True, "success": ok, "results": results,
+                                "preset": preset, "time": time.time()}
 
 def invalidate_cache(server_id=None):
     if server_id:
@@ -1104,6 +1163,17 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"presets": out, "help": PARAM_HELP})
             return
 
+        if path == "/api/tunnel/preset-status":
+            qs = urllib.parse.parse_qs(parsed.query)
+            job = qs.get("job", [""])[0]
+            with _PRESET_JOBS_LOCK:
+                st = _PRESET_JOBS.get(job)
+            if st is None:
+                self.send_json({"error": "unknown job"}, 404)
+                return
+            self.send_json(st)
+            return
+
         if path == "/api/settings/get":
             settings = load_settings()
             self.send_json({"username": settings.get("admin_user", ADMIN_USER)})
@@ -1615,9 +1685,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/tunnel/set-preset":
-            # Re-apply a performance preset to BOTH ends of a tunnel and restart
-            # them. Transport / port / token / port-forwarding are preserved by
-            # reading them back from each end's existing config.
+            # Kick off the rebuild in the background and return immediately so the
+            # browser gets a fast reply even though both ends are about to restart.
             preset = data.get("preset", "balanced")
             ends = data.get("ends", [])
             if preset not in PRESETS:
@@ -1626,45 +1695,15 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if not isinstance(ends, list) or not ends:
                 self.send_json({"error": "no tunnel ends provided"}, 400)
                 return
-            data_servers = load_servers()
-            results = []
-            for end in ends:
-                svc = end.get("service", "")
-                sid = end.get("server_id", "")
-                if not is_safe_svc(svc):
-                    results.append({"service": svc, "success": False, "error": "invalid service name"})
-                    continue
-                srv = next((s for s in data_servers.get("servers", []) if s.get("id") == sid), None)
-                if not srv:
-                    results.append({"service": svc, "success": False, "error": "server not found"})
-                    continue
-                name = svc.replace("backhaul-", "").replace(".service", "")
-                mm = _re.match(r"^(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-(\d+)$", name)
-                if not mm:
-                    results.append({"service": svc, "success": False, "error": "cannot parse service"})
-                    continue
-                role, transport, port = mm.group(1), mm.group(2), mm.group(3)
-                cfg_path = f"{INSTALL_DIR}/{role}-{transport}-{port}.toml"
-                cfg_text, _ = remote_exec(srv, f"cat {cfg_path} 2>/dev/null")
-                cfg_text = cfg_text or ""
-                tok_m = _re.search(r'token\s*=\s*"([^"]*)"', cfg_text)
-                params = {"role": role, "transport": transport, "port": port,
-                          "token": tok_m.group(1) if tok_m else "", "preset": preset}
-                if role == "kharej":
-                    ra = _re.search(r'remote_addr\s*=\s*"([^"]+):\d+"', cfg_text)
-                    if ra:
-                        params["iran_ip"] = ra.group(1)
-                else:
-                    pm = _re.search(r'ports\s*=\s*\[(.*?)\]', cfg_text, _re.S)
-                    if pm:
-                        params["ports"] = pm.group(1).strip()
-                res = create_tunnel_on_server(srv, params)
-                results.append({"service": svc, "success": res.get("success", False),
-                                "error": res.get("error")})
-                invalidate_cache(sid)
-            invalidate_cache()
-            ok = bool(results) and all(r.get("success") for r in results)
-            self.send_json({"success": ok, "results": results, "preset": preset})
+            servers_data = load_servers()
+            job_id = secrets.token_hex(8)
+            with _PRESET_JOBS_LOCK:
+                for k in [k for k, v in _PRESET_JOBS.items() if time.time() - v.get("time", 0) > 600]:
+                    _PRESET_JOBS.pop(k, None)
+                _PRESET_JOBS[job_id] = {"done": False, "time": time.time()}
+            threading.Thread(target=_run_preset_job,
+                             args=(job_id, preset, ends, servers_data), daemon=True).start()
+            self.send_json({"success": True, "job": job_id})
             return
 
         if path == "/api/tunnel/save_config":
@@ -2580,8 +2619,27 @@ async function applyPreset(){
   const btn=$('preset-apply-btn');btn.disabled=true;btn.textContent='Applying\u2026';
   try{
     const r=await api('/api/tunnel/set-preset',{preset:sel.value,ends:ends});
+    const job=r&&r.job; if(!job)throw new Error('Could not start the change');
+    // Poll for the result. The rebuild restarts both ends and can briefly drop
+    // this connection, so individual polls may fail \u2014 we just keep retrying.
+    let done=null;
+    for(let i=0;i<40 && !done;i++){
+      await new Promise(s=>setTimeout(s,1500));
+      try{
+        const st=await fetch('/api/tunnel/preset-status?job='+encodeURIComponent(job),{cache:'no-store'}).then(x=>x.json());
+        if(st&&st.done)done=st;
+      }catch(e){/* transient during restart \u2014 keep polling */}
+    }
     closeModal('m-preset');
-    showToast((r&&r.success)?'Preset applied & tunnel restarted':'Applied with some errors \u2014 check logs');
+    if(done){
+      if(done.success){showToast('Preset applied & tunnel restarted \u2713');}
+      else{
+        const errs=(done.results||[]).filter(x=>!x.success).map(x=>(x.server?x.server+': ':'')+(x.error||'error')).join(' \u00b7 ');
+        showToast('Could not apply preset \u2014 '+(errs||'unknown error'),true);
+      }
+    }else{
+      showToast('Still applying\u2026 the tunnel is restarting. Refresh in a moment to confirm.',true);
+    }
     setTimeout(fetchTunnels,800);
   }catch(e){showToast(e.message,true)}
   finally{btn.disabled=false;btn.textContent='Apply & Restart';}

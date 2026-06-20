@@ -1,6 +1,19 @@
 # BackhaulManager — Security Hardening & Performance Presets
 
-Panel `v2.11.0` · Script `v1.6.2`
+Panel `v2.11.1` · Script `v1.6.2`
+
+## 🐞 Preset switch "failed to fetch" fix (v2.11.1)
+- Applying a preset rebuilds and restarts **both ends** over SSH. Doing it in a
+  single synchronous request meant the restart briefly dropped the very
+  connection the panel reply travelled over, so the browser showed
+  **"Failed to fetch"** even though the change had actually succeeded (hence it
+  looked correct after a manual refresh).
+- The switch is now **asynchronous**: `POST /api/tunnel/set-preset` starts the
+  work in a background thread and returns a `job` id instantly (before anything
+  restarts). The UI polls `GET /api/tunnel/preset-status?job=…` and tolerates
+  transient poll failures during the restart, then reports a clear
+  **success ✓** or the exact **error** per end. Both ends are rebuilt in
+  parallel for speed.
 
 ## ✨ Centered paired UI + inline preset switch (v2.11.0)
 - **Centered layout & polish** — tunnel rows are now centred on the page
