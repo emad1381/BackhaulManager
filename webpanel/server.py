@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.9.1 (security-hardened + presets + UI polish)
+Version: 2.9.2 (hardened + presets + UI polish + cron UI)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1934,6 +1934,7 @@ textarea.code:focus{border-color:var(--acc)}
 .mini-loader{border:2px solid var(--brd);border-top-color:var(--acc);border-radius:50%;width:14px;height:14px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:50px 20px;font-size:14px}
+.btn-icon.cron-on{color:#fff;background:linear-gradient(135deg,var(--acc2),var(--accent));border-color:transparent}
 /* ---- Preset selector / custom builder ---- */
 .preset-info{margin:-4px 0 14px;padding:14px 16px;border-radius:14px;
   background:var(--glass);border:1px solid var(--glass-brd);display:none}
@@ -2104,6 +2105,37 @@ textarea.code:focus{border-color:var(--acc)}
   </div>
 </div>
 
+<!-- Auto-Restart (cron) Modal -->
+<div class="modal" id="m-cron">
+  <div class="m-box" style="max-width:460px">
+    <div class="m-head"><h3>Auto-Restart Schedule</h3><button class="m-close" onclick="closeModal('m-cron')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="m-body">
+      <p style="color:var(--mut);font-size:13px;line-height:1.6;margin-bottom:14px">
+        Periodically restart this tunnel to clear cache and keep the link fast.
+        The tunnel disconnects for ~1 second on each restart.</p>
+      <div id="cron-current" style="font-size:13px;margin-bottom:14px"></div>
+      <div class="field"><label>Restart every</label>
+        <select id="cron-preset" onchange="cronPreset()">
+          <option value="0">Off (no auto-restart)</option>
+          <option value="5">5 minutes</option>
+          <option value="15">15 minutes</option>
+          <option value="30" selected>30 minutes</option>
+          <option value="60">1 hour</option>
+          <option value="120">2 hours</option>
+          <option value="360">6 hours</option>
+          <option value="custom">Custom (minutes)…</option>
+        </select>
+      </div>
+      <div class="field" id="cron-custom-wrap" style="display:none"><label>Custom interval (minutes, 1-1440)</label>
+        <input id="cron-custom" type="number" min="1" max="1440" placeholder="e.g. 10"></div>
+    </div>
+    <div class="m-foot">
+      <button class="btn btn-danger" onclick="removeCron()">Disable</button>
+      <button class="btn btn-primary" onclick="saveCron()">Save schedule</button>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal" id="m-settings">
   <div class="m-box">
@@ -2255,6 +2287,7 @@ async function fetchTunnels(force){
           <button class="btn btn-icon" title="Stop" onclick="tunAction('${esc(t.service)}','${t.server_id}','stop')"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
           <button class="btn btn-icon" title="Logs" onclick="showLogs('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H3m18 8H8m13 8H3"/></svg></button>
           <button class="btn btn-icon" title="Edit config" onclick="editConf('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+          <button class="btn btn-icon${t.cron_active?' cron-on':''}" title="Auto-restart schedule" onclick="openCron('${esc(t.service)}','${t.server_id}',${t.cron_active?1:0},'${esc(t.cron_interval||'')}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
           <button class="btn btn-danger btn-icon" title="Delete" onclick="delTun('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div></div>`;
     }).join('');
@@ -2267,6 +2300,37 @@ async function tunAction(svc,sid,act){
 async function delTun(svc,sid){
   if(!confirm('Permanently delete this tunnel?'))return;
   try{await api('/api/tunnel/delete',{service:svc,server_id:sid});showToast('Tunnel deleted');fetchTunnels();}
+  catch(e){showToast(e.message,true)}
+}
+var cronSvc='',cronSid='';
+function cronPreset(){
+  $('cron-custom-wrap').style.display=$('cron-preset').value==='custom'?'block':'none';
+}
+function openCron(svc,sid,active,interval){
+  cronSvc=svc;cronSid=sid;
+  const cur=$('cron-current');
+  if(active&&interval){cur.innerHTML='Current: <b style="color:var(--succ)">every '+esc(interval)+' min</b>';}
+  else{cur.innerHTML='Current: <span style="color:var(--mut)">disabled</span>';}
+  const opts=['5','15','30','60','120','360'];
+  const sel=$('cron-preset');
+  if(interval&&opts.indexOf(String(interval))>-1){sel.value=String(interval);$('cron-custom').value='';}
+  else if(interval){sel.value='custom';$('cron-custom').value=interval;}
+  else{sel.value='30';$('cron-custom').value='';}
+  cronPreset();openModal('m-cron');
+}
+async function saveCron(){
+  let iv=$('cron-preset').value;
+  if(iv==='custom'){iv=parseInt($('cron-custom').value,10);
+    if(!iv||iv<1||iv>1440){showToast('Enter a custom interval between 1 and 1440 minutes',true);return;}}
+  iv=parseInt(iv,10)||0;
+  if(iv<=0){removeCron();return;}
+  try{await api('/api/tunnel/cron',{service:cronSvc,server_id:cronSid,interval:iv,action:'set'});
+    closeModal('m-cron');showToast('Auto-restart set: every '+iv+' min');fetchTunnels();}
+  catch(e){showToast(e.message,true)}
+}
+async function removeCron(){
+  try{await api('/api/tunnel/cron',{service:cronSvc,server_id:cronSid,interval:0,action:'remove'});
+    closeModal('m-cron');showToast('Auto-restart disabled');fetchTunnels();}
   catch(e){showToast(e.message,true)}
 }
 async function showLogs(svc,sid){
@@ -2446,7 +2510,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.9.1")
+    print("  BackhaulManager Web Panel v2.9.2")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")
