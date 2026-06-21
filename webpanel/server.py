@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.3 (force restart per-server + stability fixes)
+Version: 2.11.4 (exact cron match - safe tunnel delete)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1578,7 +1578,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                     config_name = svc.replace("backhaul-", "").replace(".service", "")
                     remote_exec(srv, f"cp {INSTALL_DIR}/{config_name}.toml {BACKUP_DIR}/ 2>/dev/null")
                     remote_exec(srv, f"rm -f {INSTALL_DIR}/{config_name}.toml {SERVICE_DIR}/{svc}")
-                    remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
+                    remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER} {svc}$' | crontab -\"")
                     remote_exec(srv, "systemctl daemon-reload")
                     invalidate_cache(server_id)
                     self.send_json({"success": True})
@@ -1702,7 +1702,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"error": "server not found"}, 404)
                 return
             if action == "remove":
-                remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' | crontab -\"")
+                remote_exec(srv, f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER} {svc}$' | crontab -\"")
                 remote_exec(srv, f"rm -f {CRON_CONFIG_DIR}/{svc}.conf")
                 invalidate_cache(server_id)
             elif interval > 0:
@@ -1715,7 +1715,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 # phantom "scheduled" badge in the dashboard while no job ran.
                 tmpf = f"/tmp/bhm_cron_{svc}.tmp"
                 cron_cmd = (
-                    f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER}.*{svc}' > {tmpf}; "
+                    f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER} {svc}$' > {tmpf}; "
                     f"echo '{expr} systemctl restart {svc} {CRON_MARKER} {svc}' >> {tmpf}; "
                     f"if crontab {tmpf}; then mkdir -p {CRON_CONFIG_DIR} && "
                     f"printf 'SERVICE={svc}\\nINTERVAL={interval}\\nSCHEDULE={expr}\\n' > {CRON_CONFIG_DIR}/{svc}.conf; "

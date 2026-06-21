@@ -1993,7 +1993,7 @@ _cron_get_config_path() {
 
 _cron_is_active() {
     local svc="$1"
-    crontab -l 2>/dev/null | grep -q "$CRON_MARKER.*$svc"
+    crontab -l 2>/dev/null | grep -q "$CRON_MARKER $svc$"
 }
 
 _cron_get_interval() {
@@ -2037,7 +2037,7 @@ _cron_install() {
 
     local cron_line="${cron_expr} systemctl restart ${svc} ${CRON_MARKER} ${svc}"
     local tmpf; tmpf=$(mktemp)
-    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc"; echo "$cron_line") > "$tmpf"
+    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER $svc$"; echo "$cron_line") > "$tmpf"
 
     # Only persist the .conf marker if the crontab actually loads, so a rejected
     # line never leaves a "scheduled" record with no job behind it.
@@ -2060,7 +2060,7 @@ _cron_remove() {
     local svc="$1"
     local conf; conf=$(_cron_get_config_path "$svc")
 
-    crontab -l 2>/dev/null | grep -v "$CRON_MARKER.*$svc" | crontab -
+    crontab -l 2>/dev/null | grep -v "$CRON_MARKER $svc$" | crontab -
     rm -f "$conf"
 }
 
