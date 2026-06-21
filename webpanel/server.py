@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.1 (async preset switch - fixes "failed to fetch")
+Version: 2.11.3 (force restart per-server + stability fixes)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -1545,11 +1545,16 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             if not is_safe_svc(svc):
                 self.send_json({"error": "invalid service name"}, 400)
                 return
-            if svc and action in ["start", "stop", "restart"]:
+            if svc and action in ["start", "stop", "restart", "force-restart"]:
                 data_servers = load_servers()
                 srv = next((s for s in data_servers.get("servers", []) if s.get("id") == server_id), None)
                 if srv:
-                    out, code = remote_exec(srv, f"systemctl {action} {svc}")
+                    if action == "force-restart":
+                        remote_exec(srv, f"systemctl stop {svc} 2>/dev/null")
+                        time.sleep(2)
+                        out, code = remote_exec(srv, f"systemctl start {svc} 2>/dev/null")
+                    else:
+                        out, code = remote_exec(srv, f"systemctl {action} {svc}")
                     invalidate_cache(server_id)
                     self.send_json({"success": code == 0, "output": out})
                 else:
@@ -2203,6 +2208,8 @@ textarea.code:focus{border-color:var(--acc)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:50px 20px;font-size:14px}
 .btn-icon.cron-on{color:#fff;background:var(--acc2);background:linear-gradient(135deg,var(--acc2),var(--acc));border-color:transparent}
+.btn-force{color:var(--accent);background:var(--glass);border-color:var(--accent)}
+.btn-force:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
 /* ---- Preset selector / custom builder ---- */
 .preset-info{margin:-4px 0 14px;padding:14px 16px;border-radius:14px;
   background:var(--glass);border:1px solid var(--glass-brd);display:none}
@@ -2611,6 +2618,7 @@ function endCard(t,role){
     <div class="srv-actions">
       <button class="btn btn-icon" title="${t.status==='running'?'Restart':'Start'}" onclick="tunAction('${esc(t.service)}','${t.server_id}','${t.status==='running'?'restart':'start'}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
       <button class="btn btn-icon" title="Stop" onclick="tunAction('${esc(t.service)}','${t.server_id}','stop')"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      <button class="btn btn-icon btn-force" title="Force Restart — stop + start" onclick="forceRestart('${esc(t.service)}','${t.server_id}','${esc(t.server_name)}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M21 8l-4-4M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M3 16l4 4M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>
       <button class="btn btn-icon" title="Logs" onclick="showLogs('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H3m18 8H8m13 8H3"/></svg></button>
       <button class="btn btn-icon" title="Edit config" onclick="editConf('${esc(t.service)}','${t.server_id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
       <button class="btn btn-icon${t.cron_active?' cron-on':''}" title="Auto-restart schedule" onclick="openCron('${esc(t.service)}','${t.server_id}',${t.cron_active?1:0},'${esc(t.cron_interval||'')}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
@@ -2688,6 +2696,14 @@ async function applyPreset(){
 async function tunAction(svc,sid,act){
   try{await api('/api/tunnel/action',{service:svc,server_id:sid,action:act});showToast('Tunnel '+act+'ed');fetchTunnels();}
   catch(e){showToast(e.message,true)}
+}
+async function forceRestart(svc,sid,name){
+  if(!confirm('Force restart '+name+' ('+svc+')? This does a complete stop + start.'))return;
+  try{
+    await api('/api/tunnel/action',{service:svc,server_id:sid,action:'force-restart'});
+    showToast('Tunnel force-restarted ✓');
+    fetchTunnels();
+  }catch(e){showToast(e.message,true)}
 }
 async function delTun(svc,sid){
   if(!confirm('Permanently delete this tunnel end?'))return;
