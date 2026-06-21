@@ -1164,6 +1164,7 @@ menu_create_tunnel() {
 Description=${DESCRIPTION} - ${ROLE^} port ${TUNNEL_PORT}
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -2747,6 +2748,7 @@ menu_webpanel() {
 Description=BackhaulManager Web Panel
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -2754,7 +2756,7 @@ User=root
 WorkingDirectory=$WEBPANEL_DIR
 ExecStart=$(command -v python3) $WEBPANEL_SCRIPT
 Restart=always
-RestartSec=5
+RestartSec=10
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

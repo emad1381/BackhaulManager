@@ -1076,6 +1076,7 @@ class ReuseAddrHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     allow_reuse_port = True
+    block_on_close = False
 
     def server_bind(self):
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1083,13 +1084,25 @@ class ReuseAddrHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         except (AttributeError, OSError):
             pass
+        self.socket.settimeout(60)
         super().server_bind()
 
 
 class PanelHandler(http.server.BaseHTTPRequestHandler):
+    timeout = 30
 
     def log_message(self, format, *args):
         pass
+
+    def handle_one_request(self):
+        """Override to catch connection-level errors (broken pipe, reset, etc.)
+        before they reach do_GET / do_POST, preventing thread death."""
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception:
+            pass
 
     def send_json(self, data, status=200):
         self.send_response(status)
@@ -1126,7 +1139,32 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             return True
         return False
 
+    def _safe_respond(self, route_func):
+        """Catch and log any exception during request handling so a single
+        broken handler never kills the whole server thread pool."""
+        try:
+            route_func()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass  # client disconnected — nothing to send back
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            err = f"Internal server error in {self.command} {self.path}: {e}"
+            print(f"  [PANEL ERROR] {err}")
+            for line in tb.rstrip().split("\n"):
+                print(f"        {line}")
+            try:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Internal server error"}).encode())
+            except Exception:
+                pass
+
     def do_GET(self):
+        self._safe_respond(self._route_request)
+
+    def _route_request(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -1254,6 +1292,9 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         self.send_json({"error": "not found"}, 404)
 
     def do_POST(self):
+        self._safe_respond(self._route_post)
+
+    def _route_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
