@@ -1716,7 +1716,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                 tmpf = f"/tmp/bhm_cron_{svc}.tmp"
                 cron_cmd = (
                     f"bash -c \"crontab -l 2>/dev/null | grep -v '{CRON_MARKER} {svc}$' > {tmpf}; "
-                    f"echo '{expr} systemctl restart {svc} {CRON_MARKER} {svc}' >> {tmpf}; "
+                    f"echo '{expr} PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin systemctl restart {svc} {CRON_MARKER} {svc}' >> {tmpf}; "
                     f"if crontab {tmpf}; then mkdir -p {CRON_CONFIG_DIR} && "
                     f"printf 'SERVICE={svc}\\nINTERVAL={interval}\\nSCHEDULE={expr}\\n' > {CRON_CONFIG_DIR}/{svc}.conf; "
                     f"echo CRON_OK; else echo CRON_FAIL; fi; rm -f {tmpf}\""

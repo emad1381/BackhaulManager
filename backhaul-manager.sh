@@ -2035,7 +2035,7 @@ _cron_install() {
         return 1
     fi
 
-    local cron_line="${cron_expr} systemctl restart ${svc} ${CRON_MARKER} ${svc}"
+    local cron_line="${cron_expr} PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin systemctl restart ${svc} ${CRON_MARKER} ${svc}"
     local tmpf; tmpf=$(mktemp)
     (crontab -l 2>/dev/null | grep -v "$CRON_MARKER $svc$"; echo "$cron_line") > "$tmpf"
 
