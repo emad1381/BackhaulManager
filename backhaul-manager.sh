@@ -3286,6 +3286,241 @@ SERVICE
 }
 
 # ─── MAIN MENU ───────────────────────────────────────────────────────────────
+# ─── PREMIUM TEST ────────────────────────────────────────────────────────────
+#  Verifies that the Premium (TUN/IPX) tunnel can actually RUN on this server,
+#  and offers a two-server end-to-end test to detect provider-side ICMP /
+#  source-spoofing (BCP38 / egress) filtering — the usual reason a premium
+#  tunnel comes up but "won't connect".
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Ensure TUN module + /dev/net/tun + ip_forward are ready. Returns 0 if OK.
+_premium_preflight() {
+    local ok=0
+    section "Premium Preflight Checks"
+
+    # 1) Premium binary
+    if [[ -x "$PREMIUM_BINARY" ]]; then
+        local ver; ver=$("$PREMIUM_BINARY" -v 2>/dev/null | grep -oE 'v[0-9][^ ]*' | head -n1)
+        success "Premium binary found: ${PREMIUM_BINARY}${ver:+ ($ver)}"
+    else
+        warn "Premium binary NOT found at ${PREMIUM_BINARY}."
+        echo -e "  ${DIM}Install it first: Main Menu → [8] Install / Update Binary → Premium Binary${NC}"
+        ok=1
+    fi
+
+    # 2) TUN module + device node
+    modprobe tun 2>/dev/null || true
+    if [[ ! -c /dev/net/tun ]]; then
+        mkdir -p /dev/net 2>/dev/null || true
+        mknod /dev/net/tun c 10 200 2>/dev/null || true
+        chmod 600 /dev/net/tun 2>/dev/null || true
+    fi
+    if [[ -c /dev/net/tun ]]; then
+        success "TUN device available: /dev/net/tun"
+    else
+        warn "TUN device /dev/net/tun is NOT available."
+        echo -e "  ${DIM}This VPS likely has TUN disabled (OpenVZ/LXC). Premium tunnel cannot work here —${NC}"
+        echo -e "  ${DIM}ask your provider to enable TUN/TAP, or use a KVM-based VPS.${NC}"
+        ok=1
+    fi
+
+    # 3) IP forwarding (premium needs it for the iptables forwarder)
+    if sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
+        success "net.ipv4.ip_forward enabled"
+        grep -qs '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf 2>/dev/null || true
+    else
+        warn "Could not enable net.ipv4.ip_forward."
+        ok=1
+    fi
+
+    # 4) iptables (used by the Iran side forwarder)
+    if command -v iptables >/dev/null 2>&1; then
+        success "iptables present"
+    else
+        warn "iptables not found — install it (apt install iptables) for Iran-side port forwarding."
+    fi
+
+    return $ok
+}
+
+# Launch the premium binary briefly with a harmless loopback config and confirm
+# the kernel actually lets it create a TUN interface on THIS server.
+_premium_smoke_test() {
+    local role="$1"
+    local tun_name="bhsmoke0"
+    local tmp_cfg tmp_log
+    tmp_cfg="$(mktemp /tmp/bhsmoke.XXXXXX.toml)"
+    tmp_log="$(mktemp /tmp/bhsmoke.XXXXXX.log)"
+    local iface; iface="$(ip route show 2>/dev/null | awk '/^default/{print $5; exit}')"
+    iface="${iface:-eth0}"
+
+    section "Premium Smoke Test (does it run here?)"
+    info "Building a temporary loopback config and launching the binary for ~7s..."
+
+    # Self-contained config: peer points to loopback so nothing leaves the box.
+    _write_premium_config "$tmp_cfg" "$role" "$iface" "1234" "1320" \
+        "127.0.0.1" "127.0.0.1" "79.127.127.35" "185.143.235.201" \
+        "$tun_name" "10.99.99.1/24" "10.99.99.2/24" "65000=65000"
+
+    "$PREMIUM_BINARY" -c "$tmp_cfg" >"$tmp_log" 2>&1 &
+    local pid=$!
+    local tun_up=0 i
+    for i in $(seq 1 7); do
+        sleep 1
+        if ip link show "$tun_name" >/dev/null 2>&1; then tun_up=1; break; fi
+        kill -0 "$pid" 2>/dev/null || break
+    done
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    ip link del "$tun_name" 2>/dev/null || true
+
+    local result=1
+    if [[ "$tun_up" -eq 1 ]]; then
+        success "TUN interface '${tun_name}' was created — Premium RUNS on this server. ✅"
+        result=0
+    elif grep -q "failed to create TUN device" "$tmp_log" 2>/dev/null; then
+        warn "Premium could NOT create a TUN device (kernel/feature blocked). ❌"
+        echo -e "  ${DIM}Likely TUN/TAP disabled by the provider (OpenVZ/LXC).${NC}"
+    else
+        warn "TUN interface did not come up in time. Last log lines:"
+        tail -n 8 "$tmp_log" 2>/dev/null | sed 's/^/      /'
+    fi
+    rm -f "$tmp_cfg" "$tmp_log"
+    return $result
+}
+
+# Two-server end-to-end test. Brings the REAL premium tunnel up temporarily;
+# the Kharej side pings the Iran TUN gateway to prove ICMP-spoofed packets
+# actually pass (i.e. BCP38 / egress filtering is NOT blocking them).
+_premium_e2e_test() {
+    local role="$SERVER_ROLE"
+    section "Premium End-to-End Test (${role^^})"
+    echo -e "  ${DIM}Run this on BOTH servers. Start the IRAN side first, then the KHAREJ side${NC}"
+    echo -e "  ${DIM}while the Iran test is still running.${NC}"
+    separator
+
+    local local_ip; local_ip="$(get_local_ip)"
+    local iface_auto; iface_auto="$(ip route show 2>/dev/null | awk '/^default/{print $5; exit}')"; iface_auto="${iface_auto:-eth0}"
+
+    local IRAN_IP KHAREJ_IP SPOOF1 SPOOF2 IFACE DURATION
+    if [[ "$role" == "iran" ]]; then
+        prompt "This (Iran) server public IP [${local_ip}]:"; read -r IRAN_IP; IRAN_IP="${IRAN_IP:-$local_ip}"
+        prompt "Kharej server public IP:"; read -r KHAREJ_IP
+        [[ -z "$KHAREJ_IP" ]] && { warn "Kharej IP required."; press_enter; return; }
+    else
+        prompt "Iran server public IP:"; read -r IRAN_IP
+        [[ -z "$IRAN_IP" ]] && { warn "Iran IP required."; press_enter; return; }
+        prompt "This (Kharej) server public IP [${local_ip}]:"; read -r KHAREJ_IP; KHAREJ_IP="${KHAREJ_IP:-$local_ip}"
+    fi
+    prompt "Spoof IP 1 (White IP 1) [79.127.127.35]:"; read -r SPOOF1; SPOOF1="${SPOOF1:-79.127.127.35}"
+    prompt "Spoof IP 2 (White IP 2) [185.143.235.201]:"; read -r SPOOF2; SPOOF2="${SPOOF2:-185.143.235.201}"
+    prompt "Host network interface [${iface_auto}]:"; read -r IFACE; IFACE="${IFACE:-$iface_auto}"
+    prompt "Test duration in seconds [40]:"; read -r DURATION; DURATION="${DURATION:-40}"
+    [[ "$DURATION" =~ ^[0-9]+$ ]] || DURATION=40
+
+    _premium_preflight >/dev/null 2>&1
+
+    local tun_name="bhe2e0"
+    local tun_local tun_remote gw
+    if [[ "$role" == "iran" ]]; then
+        tun_local="10.77.0.1/24"; tun_remote="10.77.0.2/24"; gw="10.77.0.2"
+    else
+        tun_local="10.77.0.2/24"; tun_remote="10.77.0.1/24"; gw="10.77.0.1"
+    fi
+
+    local tmp_cfg tmp_log
+    tmp_cfg="$(mktemp /tmp/bhe2e.XXXXXX.toml)"
+    tmp_log="$(mktemp /tmp/bhe2e.XXXXXX.log)"
+    _write_premium_config "$tmp_cfg" "$role" "$IFACE" "1234" "1320" \
+        "$IRAN_IP" "$KHAREJ_IP" "$SPOOF1" "$SPOOF2" \
+        "$tun_name" "$tun_local" "$tun_remote" "65000=65000"
+
+    info "Starting temporary premium tunnel (${tun_name}) for ${DURATION}s..."
+    "$PREMIUM_BINARY" -c "$tmp_cfg" >"$tmp_log" 2>&1 &
+    local pid=$!
+
+    # Wait for the TUN interface to come up locally
+    local tun_up=0 i
+    for i in $(seq 1 10); do
+        sleep 1
+        if ip link show "$tun_name" >/dev/null 2>&1; then tun_up=1; break; fi
+        kill -0 "$pid" 2>/dev/null || break
+    done
+
+    if [[ "$tun_up" -ne 1 ]]; then
+        warn "TUN interface did not come up locally. Last log lines:"
+        tail -n 10 "$tmp_log" 2>/dev/null | sed 's/^/      /'
+        kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+        ip link del "$tun_name" 2>/dev/null || true
+        rm -f "$tmp_cfg" "$tmp_log"; press_enter; return
+    fi
+    success "Local TUN '${tun_name}' is up (${tun_local})."
+
+    if [[ "$role" == "iran" ]]; then
+        echo -e "\n  ${BOLD}${LGREEN}IRAN side is now listening.${NC}"
+        echo -e "  ${DIM}Now run this same test (option) on the KHAREJ server.${NC}"
+        echo -e "  ${DIM}Keeping the tunnel up for ${DURATION}s — watch the result on Kharej...${NC}\n"
+        local remaining="$DURATION"
+        while [[ "$remaining" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; do
+            printf "\r  ${CYAN}⏳ %ss remaining...${NC} " "$remaining"
+            sleep 1; remaining=$(( remaining - 1 ))
+        done
+        echo
+        success "Iran test window finished."
+    else
+        echo -e "\n  ${BOLD}${WHITE}Pinging Iran TUN gateway ${gw} across the tunnel...${NC}"
+        echo -e "  ${DIM}(make sure the Iran side test is running right now)${NC}\n"
+        if ping -c 5 -W 2 -I "$tun_name" "$gw" 2>&1 | sed 's/^/      /' | grep -qE '[1-9][0-9]* received|bytes from'; then
+            separator
+            success "PASS — ICMP-spoofed packets pass between the two servers. ✅"
+            echo -e "  ${LGREEN}Your provider allows the traffic — the Premium tunnel will work here.${NC}"
+        else
+            separator
+            warn "FAIL — TUN is up on both sides but no replies came back. ❌"
+            echo -e "  ${YELLOW}This strongly indicates provider-side ICMP or source-spoofing (BCP38/egress)${NC}"
+            echo -e "  ${YELLOW}filtering is blocking the premium (IPX/ICMP) packets. The premium tunnel${NC}"
+            echo -e "  ${YELLOW}cannot pass traffic on this network path.${NC}"
+            echo -e "  ${DIM}Try a different datacenter/provider, or use a non-spoofing transport (WSSMUX).${NC}"
+        fi
+    fi
+
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    ip link del "$tun_name" 2>/dev/null || true
+    rm -f "$tmp_cfg" "$tmp_log"
+    press_enter
+}
+
+menu_premium_test() {
+    print_header
+    echo -e "  ${BOLD}${WHITE}Premium Tunnel Test${NC}\n"
+    echo -e "  Role : ${LYELLOW}${SERVER_ROLE^^}${NC}"
+    separator
+    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Quick check${NC} — does Premium even RUN on this server? ${DIM}(local, ~10s)${NC}"
+    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Full test${NC}   — two-server connectivity / BCP38 spoofing check"
+    echo -e "  ${WHITE}[0]${NC} Back"
+    separator
+    prompt "Choice:"; read -r pt_choice
+    case "$pt_choice" in
+        1)
+            if _premium_preflight; then
+                _premium_smoke_test "$SERVER_ROLE"
+            else
+                warn "Fix the preflight issues above, then run the smoke test again."
+            fi
+            press_enter
+            ;;
+        2)
+            if [[ ! -x "$PREMIUM_BINARY" ]]; then
+                warn "Premium binary not found. Install it first (Main Menu → [8])."
+                press_enter; return
+            fi
+            _premium_e2e_test
+            ;;
+        0|"") return ;;
+        *) warn "Invalid option"; sleep 1 ;;
+    esac
+}
+
 main_menu() {
     while true; do
         print_header
@@ -3301,6 +3536,7 @@ main_menu() {
         echo -e "  ${LCYAN}[6]${NC}  Two-Way Link Test"
         echo -e "  ${GRAY}[7]${NC}  System Info"
         echo -e "  ${GRAY}[8]${NC}  Install / Update Binary"
+        echo -e "  ${LMAGENTA}[9]${NC}  Premium Test ${DIM}(can this server run the Premium tunnel?)${NC}"
         echo -e "  ${RED}[0]${NC}  Exit"
         separator
         prompt "Choice:"; read -r main_choice
@@ -3314,6 +3550,7 @@ main_menu() {
             6) menu_link_test ;;
             7) menu_info ;;
             8) menu_install ;;
+            9) menu_premium_test ;;
             0)
                 echo -e "\n${DIM}Bye!${NC}\n"
                 exit 0
