@@ -11,6 +11,11 @@ Join the Telegram channel for updates, notes, and more BackhaulManager content: 
 - Interactive Iran/Kharej role selection with auto-detection
 - One-command Backhaul binary install/update flow
 - Guided tunnel creation for `tcp`, `tcpmux`, `wsmux`, and `wssmux`
+- **Premium WireGuard tunnel** — our own pro-grade, encrypted (ChaCha20),
+  kernel-space tunnel that needs **no IP spoofing and no BCP38**, so it works on
+  any provider. Both servers derive the key pair from a single shared **token**
+  (no manual key exchange), plus a built-in **self-test** that proves the
+  WireGuard datapath works on your server
 - Preset and advanced tuning modes for production-style configs
 - Systemd service generation, start/stop/restart, live logs, and deletion
 - Config backup/restore and firewall helper for UFW or iptables
@@ -123,6 +128,34 @@ hook that restarts the panel automatically when the certificate is renewed.
 - Responsive design works on mobile too
 
 To run as a service (auto-start on boot), select **[3] Start on boot**.
+
+## Premium Tunnel (WireGuard)
+
+A pro-grade tunnel built on the kernel **WireGuard** datapath — encrypted,
+fast, and (unlike spoofing-based tunnels) **requires no source-IP spoofing and
+no BCP38**, so it works on ordinary providers.
+
+How it works:
+
+- Both servers derive the **same WireGuard key pair from one shared token**
+  (`SHA-256(token|role)`), so there is **no manual public-key exchange**.
+- The Iran side forwards public ports across the encrypted tunnel to the Kharej
+  service (which must listen on `0.0.0.0` or its tunnel IP `10.20.20.2`).
+
+Usage:
+
+1. Main Menu → **[9] Premium Tunnel** → **[3] Self-Test** — confirms WireGuard
+   actually carries traffic on this server (it spins up two namespaces, runs a
+   real encrypted ping + TCP check, and reports PASS/FAIL).
+2. On **Kharej**: [9] → [1] Create — pick a UDP port, enter the Iran IP, a token,
+   and your port mappings.
+3. On **Iran**: [9] → [1] Create — same UDP port and token, enter the Kharej IP,
+   same mappings.
+4. Verify with `wg show bhmwg<port>` (look for a recent handshake).
+
+> Requirements: `wireguard-tools` (auto-installed) and a kernel with WireGuard
+> (built in to Ubuntu ≥ 20.04 / kernel ≥ 5.6). The old TUN/IPX spoofing premium
+> has been removed in favour of this.
 
 ## Notes
 

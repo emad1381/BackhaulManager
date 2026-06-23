@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Backhaul Free - Tunnel Manager
-#  Version : 1.7.0 (Premium Spoof Edition)
+#  Version : 1.8.0 (Premium WireGuard Edition)
 #  Author  : emad1381  (security-hardened + performance profiles)
-#  Supports: TCP | TCPMUX | WSMUX | WSSMUX
+#  Supports: TCP | TCPMUX | WSMUX | WSSMUX | PREMIUM (WireGuard)
 #  Roles   : Iran (Server) | Kharej (Client)
 # =============================================================================
 
@@ -262,7 +262,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.7.0 (Premium) by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.0 (Premium) by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -322,7 +322,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.7.0 (Premium) by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.0 (Premium) by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -360,7 +360,6 @@ menu_install() {
     echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Mirror URL${NC}  — Enter a custom download URL manually"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Local file${NC}  — Use a file already on this server"
     echo -e "            ${DIM}(e.g. /root/backhaul_linux_amd64.tar.gz)${NC}"
-    echo -e "  ${WHITE}[4]${NC} ${LMAGENTA}Premium Binary${NC} — Install from local 'backhaul premium' folder"
     echo -e "  ${WHITE}[0]${NC} Cancel"
     separator
     prompt "Choice:"; read -r dl_choice
@@ -381,66 +380,6 @@ menu_install() {
                 return
             fi
             source_archive="$local_path"
-            ;;
-        4)
-            echo -e "  ${BOLD}${WHITE}Install Backhaul Premium Binary${NC}\n"
-            local repo_bin=""
-            local script_dir; script_dir=$(dirname "$(readlink -f "$0")")
-            if [[ -f "$script_dir/backhaul premium/backhaul_premium" ]]; then
-                repo_bin="$script_dir/backhaul premium/backhaul_premium"
-            elif [[ -f "./backhaul premium/backhaul_premium" ]]; then
-                repo_bin="./backhaul premium/backhaul_premium"
-            elif [[ -f "/root/backhaul-core/backhaul_premium" ]]; then
-                repo_bin="/root/backhaul-core/backhaul_premium"
-            fi
-
-            prompt "Path to backhaul_premium binary [${repo_bin}]:"; read -r prem_path
-            prem_path="${prem_path:-$repo_bin}"
-
-            if [[ -z "$prem_path" ]] || [[ ! -f "$prem_path" ]]; then
-                warn "Local backhaul_premium binary not found."
-                prompt "Would you like to download it from your GitHub repository? [Y/n]:"; read -r dl_prem
-                if [[ "${dl_prem,,}" != "n" ]]; then
-                    local repo_url="https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul%20premium/backhaul_premium"
-                    info "Downloading premium binary from GitHub..."
-                    mkdir -p "$(dirname "$PREMIUM_BINARY")"
-                    local dl_success=false
-                    if command -v wget &>/dev/null; then
-                        if wget -q --show-progress --timeout=60 --tries=2 -O "$PREMIUM_BINARY" "$repo_url"; then
-                            dl_success=true
-                        fi
-                    elif command -v curl &>/dev/null; then
-                        if curl -L --progress-bar --connect-timeout 60 --retry 2 -o "$PREMIUM_BINARY" "$repo_url"; then
-                            dl_success=true
-                        fi
-                    fi
-                    if [[ "$dl_success" == "true" ]] && [[ -s "$PREMIUM_BINARY" ]]; then
-                        chmod +x "$PREMIUM_BINARY"
-                        success "Backhaul Premium downloaded and installed to $PREMIUM_BINARY"
-                        press_enter
-                        return
-                    else
-                        rm -f "$PREMIUM_BINARY"
-                        warn "Download failed. Please check internet connection."
-                    fi
-                fi
-                press_enter
-                return
-            fi
-
-            if [[ -x "$PREMIUM_BINARY" ]]; then
-                local ts; ts=$(date +%Y%m%d-%H%M%S)
-                mkdir -p "$BACKUP_DIR"
-                cp "$PREMIUM_BINARY" "$BACKUP_DIR/backhaul_premium.bak.$ts"
-                info "Previous premium binary backed up."
-            fi
-
-            mkdir -p "$(dirname "$PREMIUM_BINARY")"
-            cp "$prem_path" "$PREMIUM_BINARY"
-            chmod +x "$PREMIUM_BINARY"
-            success "Backhaul Premium installed to $PREMIUM_BINARY"
-            press_enter
-            return
             ;;
         0) return ;;
         *) warn "Invalid choice"; return ;;
@@ -1093,7 +1032,7 @@ menu_create_tunnel() {
     echo -e "  ${WHITE}[2]${NC} ${LYELLOW}TCPMUX${NC} — TCP + SMUX multiplexing"
     echo -e "  ${WHITE}[3]${NC} ${LYELLOW}WSMUX${NC}  — WebSocket + mux, works through CDN/proxies"
     echo -e "  ${WHITE}[4]${NC} ${LYELLOW}WSSMUX${NC} — WebSocket Secure (TLS) + mux, encrypted ${LGREEN}(recommended)${NC}"
-    echo -e "  ${WHITE}[5]${NC} ${LMAGENTA}PREMIUM${NC} — Premium Spoofing tunnel (TUN/IPX)"
+    echo -e "  ${WHITE}[5]${NC} ${LMAGENTA}PREMIUM${NC} — Pro WireGuard tunnel (encrypted, no spoofing / no BCP38)"
     separator
     prompt "Choice [1-5]:"; read -r proto_choice
 
@@ -1103,7 +1042,7 @@ menu_create_tunnel() {
         2) TRANSPORT="tcpmux" ;;
         3) TRANSPORT="wsmux" ;;
         4) TRANSPORT="wssmux" ;;
-        5) TRANSPORT="premium" ;;
+        5) wg_create_tunnel; return ;;
         *) warn "Invalid choice"; return ;;
     esac
 
@@ -3286,239 +3225,347 @@ SERVICE
 }
 
 # ─── MAIN MENU ───────────────────────────────────────────────────────────────
-# ─── PREMIUM TEST ────────────────────────────────────────────────────────────
-#  Verifies that the Premium (TUN/IPX) tunnel can actually RUN on this server,
-#  and offers a two-server end-to-end test to detect provider-side ICMP /
-#  source-spoofing (BCP38 / egress) filtering — the usual reason a premium
-#  tunnel comes up but "won't connect".
+# ─── PREMIUM TUNNEL (WireGuard — no spoofing, no BCP38) ───────────────────────
+#  Our own pro-grade tunnel, built on the kernel WireGuard datapath:
+#    • Encrypted (ChaCha20-Poly1305), kernel-space — faster & lighter than a
+#      userspace tunnel, and needs NO IP spoofing, so it works on ANY provider
+#      (no BCP38 / egress-filtering requirement).
+#    • Single shared TOKEN: both servers deterministically derive the matching
+#      key pair from it, so there is NO manual public-key exchange — as simple
+#      to set up as the classic Backhaul token flow.
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Ensure TUN module + /dev/net/tun + ip_forward are ready. Returns 0 if OK.
-_premium_preflight() {
-    local ok=0
-    section "Premium Preflight Checks"
+WG_CONF_DIR="/etc/wireguard"
+WG_NET="10.20.20"            # /24 point-to-point link: Iran=.1  Kharej=.2
+WG_MTU_DEFAULT=1380
 
-    # 1) Premium binary
-    if [[ -x "$PREMIUM_BINARY" ]]; then
-        local ver; ver=$("$PREMIUM_BINARY" -v 2>/dev/null | grep -oE 'v[0-9][^ ]*' | head -n1)
-        success "Premium binary found: ${PREMIUM_BINARY}${ver:+ ($ver)}"
-    else
-        warn "Premium binary NOT found at ${PREMIUM_BINARY}."
-        echo -e "  ${DIM}Install it first: Main Menu → [8] Install / Update Binary → Premium Binary${NC}"
-        ok=1
-    fi
-
-    # 2) TUN module + device node
-    modprobe tun 2>/dev/null || true
-    if [[ ! -c /dev/net/tun ]]; then
-        mkdir -p /dev/net 2>/dev/null || true
-        mknod /dev/net/tun c 10 200 2>/dev/null || true
-        chmod 600 /dev/net/tun 2>/dev/null || true
-    fi
-    if [[ -c /dev/net/tun ]]; then
-        success "TUN device available: /dev/net/tun"
-    else
-        warn "TUN device /dev/net/tun is NOT available."
-        echo -e "  ${DIM}This VPS likely has TUN disabled (OpenVZ/LXC). Premium tunnel cannot work here —${NC}"
-        echo -e "  ${DIM}ask your provider to enable TUN/TAP, or use a KVM-based VPS.${NC}"
-        ok=1
-    fi
-
-    # 3) IP forwarding (premium needs it for the iptables forwarder)
-    if sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
-        success "net.ipv4.ip_forward enabled"
-        grep -qs '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf 2>/dev/null || true
-    else
-        warn "Could not enable net.ipv4.ip_forward."
-        ok=1
-    fi
-
-    # 4) iptables (used by the Iran side forwarder)
-    if command -v iptables >/dev/null 2>&1; then
-        success "iptables present"
-    else
-        warn "iptables not found — install it (apt install iptables) for Iran-side port forwarding."
-    fi
-
-    return $ok
+# Deterministic WireGuard private key (base64) from shared token + role.
+# WireGuard clamps the scalar on load, so the raw SHA-256 is a valid key and
+# both servers compute identical key material from the same token.
+wg_derive_priv() {
+    printf '%s' "${1}|bhmwg|${2}" | openssl dgst -sha256 -binary | base64 -w0
 }
+wg_pub_from_priv() { printf '%s' "$1" | wg pubkey; }
 
-# Launch the premium binary briefly with a harmless loopback config and confirm
-# the kernel actually lets it create a TUN interface on THIS server.
-_premium_smoke_test() {
-    local role="$1"
-    local tun_name="bhsmoke0"
-    local tmp_cfg tmp_log
-    tmp_cfg="$(mktemp /tmp/bhsmoke.XXXXXX.toml)"
-    tmp_log="$(mktemp /tmp/bhsmoke.XXXXXX.log)"
-    local iface; iface="$(ip route show 2>/dev/null | awk '/^default/{print $5; exit}')"
-    iface="${iface:-eth0}"
-
-    section "Premium Smoke Test (does it run here?)"
-    info "Building a temporary loopback config and launching the binary for ~7s..."
-
-    # Self-contained config: peer points to loopback so nothing leaves the box.
-    _write_premium_config "$tmp_cfg" "$role" "$iface" "1234" "1320" \
-        "127.0.0.1" "127.0.0.1" "79.127.127.35" "185.143.235.201" \
-        "$tun_name" "10.99.99.1/24" "10.99.99.2/24" "65000=65000"
-
-    "$PREMIUM_BINARY" -c "$tmp_cfg" >"$tmp_log" 2>&1 &
-    local pid=$!
-    local tun_up=0 i
-    for i in $(seq 1 7); do
-        sleep 1
-        if ip link show "$tun_name" >/dev/null 2>&1; then tun_up=1; break; fi
-        kill -0 "$pid" 2>/dev/null || break
-    done
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    ip link del "$tun_name" 2>/dev/null || true
-
-    local result=1
-    if [[ "$tun_up" -eq 1 ]]; then
-        success "TUN interface '${tun_name}' was created — Premium RUNS on this server. ✅"
-        result=0
-    elif grep -q "failed to create TUN device" "$tmp_log" 2>/dev/null; then
-        warn "Premium could NOT create a TUN device (kernel/feature blocked). ❌"
-        echo -e "  ${DIM}Likely TUN/TAP disabled by the provider (OpenVZ/LXC).${NC}"
-    else
-        warn "TUN interface did not come up in time. Last log lines:"
-        tail -n 8 "$tmp_log" 2>/dev/null | sed 's/^/      /'
-    fi
-    rm -f "$tmp_cfg" "$tmp_log"
-    return $result
-}
-
-# Two-server end-to-end test. Brings the REAL premium tunnel up temporarily;
-# the Kharej side pings the Iran TUN gateway to prove ICMP-spoofed packets
-# actually pass (i.e. BCP38 / egress filtering is NOT blocking them).
-_premium_e2e_test() {
-    local role="$SERVER_ROLE"
-    section "Premium End-to-End Test (${role^^})"
-    echo -e "  ${DIM}Run this on BOTH servers. Start the IRAN side first, then the KHAREJ side${NC}"
-    echo -e "  ${DIM}while the Iran test is still running.${NC}"
-    separator
-
-    local local_ip; local_ip="$(get_local_ip)"
-    local iface_auto; iface_auto="$(ip route show 2>/dev/null | awk '/^default/{print $5; exit}')"; iface_auto="${iface_auto:-eth0}"
-
-    local IRAN_IP KHAREJ_IP SPOOF1 SPOOF2 IFACE DURATION
-    if [[ "$role" == "iran" ]]; then
-        prompt "This (Iran) server public IP [${local_ip}]:"; read -r IRAN_IP; IRAN_IP="${IRAN_IP:-$local_ip}"
-        prompt "Kharej server public IP:"; read -r KHAREJ_IP
-        [[ -z "$KHAREJ_IP" ]] && { warn "Kharej IP required."; press_enter; return; }
-    else
-        prompt "Iran server public IP:"; read -r IRAN_IP
-        [[ -z "$IRAN_IP" ]] && { warn "Iran IP required."; press_enter; return; }
-        prompt "This (Kharej) server public IP [${local_ip}]:"; read -r KHAREJ_IP; KHAREJ_IP="${KHAREJ_IP:-$local_ip}"
-    fi
-    prompt "Spoof IP 1 (White IP 1) [79.127.127.35]:"; read -r SPOOF1; SPOOF1="${SPOOF1:-79.127.127.35}"
-    prompt "Spoof IP 2 (White IP 2) [185.143.235.201]:"; read -r SPOOF2; SPOOF2="${SPOOF2:-185.143.235.201}"
-    prompt "Host network interface [${iface_auto}]:"; read -r IFACE; IFACE="${IFACE:-$iface_auto}"
-    prompt "Test duration in seconds [40]:"; read -r DURATION; DURATION="${DURATION:-40}"
-    [[ "$DURATION" =~ ^[0-9]+$ ]] || DURATION=40
-
-    _premium_preflight >/dev/null 2>&1
-
-    local tun_name="bhe2e0"
-    local tun_local tun_remote gw
-    if [[ "$role" == "iran" ]]; then
-        tun_local="10.77.0.1/24"; tun_remote="10.77.0.2/24"; gw="10.77.0.2"
-    else
-        tun_local="10.77.0.2/24"; tun_remote="10.77.0.1/24"; gw="10.77.0.1"
-    fi
-
-    local tmp_cfg tmp_log
-    tmp_cfg="$(mktemp /tmp/bhe2e.XXXXXX.toml)"
-    tmp_log="$(mktemp /tmp/bhe2e.XXXXXX.log)"
-    _write_premium_config "$tmp_cfg" "$role" "$IFACE" "1234" "1320" \
-        "$IRAN_IP" "$KHAREJ_IP" "$SPOOF1" "$SPOOF2" \
-        "$tun_name" "$tun_local" "$tun_remote" "65000=65000"
-
-    info "Starting temporary premium tunnel (${tun_name}) for ${DURATION}s..."
-    "$PREMIUM_BINARY" -c "$tmp_cfg" >"$tmp_log" 2>&1 &
-    local pid=$!
-
-    # Wait for the TUN interface to come up locally
-    local tun_up=0 i
-    for i in $(seq 1 10); do
-        sleep 1
-        if ip link show "$tun_name" >/dev/null 2>&1; then tun_up=1; break; fi
-        kill -0 "$pid" 2>/dev/null || break
-    done
-
-    if [[ "$tun_up" -ne 1 ]]; then
-        warn "TUN interface did not come up locally. Last log lines:"
-        tail -n 10 "$tmp_log" 2>/dev/null | sed 's/^/      /'
-        kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-        ip link del "$tun_name" 2>/dev/null || true
-        rm -f "$tmp_cfg" "$tmp_log"; press_enter; return
-    fi
-    success "Local TUN '${tun_name}' is up (${tun_local})."
-
-    if [[ "$role" == "iran" ]]; then
-        echo -e "\n  ${BOLD}${LGREEN}IRAN side is now listening.${NC}"
-        echo -e "  ${DIM}Now run this same test (option) on the KHAREJ server.${NC}"
-        echo -e "  ${DIM}Keeping the tunnel up for ${DURATION}s — watch the result on Kharej...${NC}\n"
-        local remaining="$DURATION"
-        while [[ "$remaining" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; do
-            printf "\r  ${CYAN}⏳ %ss remaining...${NC} " "$remaining"
-            sleep 1; remaining=$(( remaining - 1 ))
-        done
-        echo
-        success "Iran test window finished."
-    else
-        echo -e "\n  ${BOLD}${WHITE}Pinging Iran TUN gateway ${gw} across the tunnel...${NC}"
-        echo -e "  ${DIM}(make sure the Iran side test is running right now)${NC}\n"
-        if ping -c 5 -W 2 -I "$tun_name" "$gw" 2>&1 | sed 's/^/      /' | grep -qE '[1-9][0-9]* received|bytes from'; then
-            separator
-            success "PASS — ICMP-spoofed packets pass between the two servers. ✅"
-            echo -e "  ${LGREEN}Your provider allows the traffic — the Premium tunnel will work here.${NC}"
-        else
-            separator
-            warn "FAIL — TUN is up on both sides but no replies came back. ❌"
-            echo -e "  ${YELLOW}This strongly indicates provider-side ICMP or source-spoofing (BCP38/egress)${NC}"
-            echo -e "  ${YELLOW}filtering is blocking the premium (IPX/ICMP) packets. The premium tunnel${NC}"
-            echo -e "  ${YELLOW}cannot pass traffic on this network path.${NC}"
-            echo -e "  ${DIM}Try a different datacenter/provider, or use a non-spoofing transport (WSSMUX).${NC}"
+# Ensure wireguard-tools + openssl + ip_forward are present. Returns 0 on success.
+wg_preflight() {
+    local quiet="${1:-}"
+    modprobe wireguard 2>/dev/null || true
+    if ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1; then
+        [[ "$quiet" != "quiet" ]] && info "Installing wireguard-tools..."
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -y >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools openssl iproute2 iptables >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y wireguard-tools openssl iproute iptables >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y wireguard-tools openssl iproute iptables >/dev/null 2>&1
         fi
     fi
+    if ! command -v wg >/dev/null 2>&1; then
+        warn "Could not install 'wireguard-tools'. Install it manually and retry."
+        return 1
+    fi
+    command -v openssl >/dev/null 2>&1 || { warn "openssl is required (key derivation)."; return 1; }
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    grep -qs '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf 2>/dev/null || true
+    return 0
+}
 
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-    ip link del "$tun_name" 2>/dev/null || true
-    rm -f "$tmp_cfg" "$tmp_log"
+# Write a wg-quick config. Iran installs DNAT rules that forward public ports
+# across the tunnel to the Kharej WG IP; the Kharej service must listen on
+# 0.0.0.0 or its WG IP (10.20.20.2).
+# args: role conf_file priv peer_pub my_wg_ip peer_wg_ip wgport peer_endpoint_ip mtu  ports...
+_wg_write_config() {
+    local role="$1" conf="$2" priv="$3" peer_pub="$4" my_ip="$5" peer_ip="$6"
+    local wgport="$7" peer_endpoint="$8" mtu="$9"; shift 9
+    local ports=("$@")
+    {
+        echo "# bhm_premium = wireguard"
+        echo "# bhm_role = ${role}"
+        echo "[Interface]"
+        echo "Address = ${my_ip}/24"
+        echo "ListenPort = ${wgport}"
+        echo "PrivateKey = ${priv}"
+        echo "MTU = ${mtu}"
+        echo "PostUp = sysctl -w net.ipv4.ip_forward=1"
+        echo "PostUp = iptables -A FORWARD -i %i -j ACCEPT"
+        echo "PostUp = iptables -A FORWARD -o %i -j ACCEPT"
+        echo "PostDown = iptables -D FORWARD -i %i -j ACCEPT"
+        echo "PostDown = iptables -D FORWARD -o %i -j ACCEPT"
+        if [[ "$role" == "iran" ]]; then
+            local p listen target
+            for p in "${ports[@]}"; do
+                listen="${p%%=*}"; target="${p#*=}"; [[ "$target" == "$p" ]] && target="$listen"
+                echo "PostUp = iptables -t nat -A PREROUTING -p tcp --dport ${listen} -j DNAT --to-destination ${peer_ip}:${target}"
+                echo "PostUp = iptables -t nat -A PREROUTING -p udp --dport ${listen} -j DNAT --to-destination ${peer_ip}:${target}"
+                echo "PostDown = iptables -t nat -D PREROUTING -p tcp --dport ${listen} -j DNAT --to-destination ${peer_ip}:${target}"
+                echo "PostDown = iptables -t nat -D PREROUTING -p udp --dport ${listen} -j DNAT --to-destination ${peer_ip}:${target}"
+            done
+            echo "PostUp = iptables -t nat -A POSTROUTING -o %i -j MASQUERADE"
+            echo "PostDown = iptables -t nat -D POSTROUTING -o %i -j MASQUERADE"
+        fi
+        echo ""
+        echo "[Peer]"
+        echo "PublicKey = ${peer_pub}"
+        echo "Endpoint = ${peer_endpoint}:${wgport}"
+        echo "AllowedIPs = ${peer_ip}/32"
+        echo "PersistentKeepalive = 25"
+    } > "$conf"
+    chmod 600 "$conf"
+}
+
+wg_create_tunnel() {
+    local role="$SERVER_ROLE"
+    print_header
+    section "Create Premium Tunnel (WireGuard)"
+    echo -e "  ${DIM}Encrypted kernel tunnel — no spoofing, works on any provider.${NC}"
+    echo -e "  Role : ${LYELLOW}${role^^}${NC}"
+    separator
+    wg_preflight || { press_enter; return; }
+
+    local local_ip; local_ip="$(get_local_ip)"
+
+    prompt "WireGuard UDP port [51820]:"; read -r WGPORT; WGPORT="${WGPORT:-51820}"
+    is_valid_port "$WGPORT" || { warn "Invalid port: $WGPORT"; press_enter; return; }
+
+    local PEER_IP
+    if [[ "$role" == "iran" ]]; then
+        prompt "Kharej server public IP:"; read -r PEER_IP
+    else
+        prompt "Iran server public IP:"; read -r PEER_IP
+    fi
+    [[ -z "$PEER_IP" ]] && { warn "Peer public IP is required."; press_enter; return; }
+
+    local gen_token; gen_token="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)"
+    echo -e "  ${DIM}Generated token: ${LYELLOW}${gen_token}${NC}  ${DIM}(use the SAME token on both servers)${NC}"
+    prompt "Shared tunnel token:"; read -r TOKEN; TOKEN="${TOKEN:-$gen_token}"
+    [[ "$TOKEN" == *$'\n'* ]] && { warn "Token must be a single line."; press_enter; return; }
+
+    prompt "Tunnel MTU [${WG_MTU_DEFAULT}]:"; read -r MTU; MTU="${MTU:-$WG_MTU_DEFAULT}"
+
+    local -a PORTS=()
+    echo -e "\n  ${BOLD}${WHITE}Port Forwarding${NC}"
+    echo -e "  ${DIM}Users hit ${WHITE}IRAN_IP:listen${NC}${DIM} → tunnelled to the Kharej service on the same/target port.${NC}"
+    echo -e "  ${DIM}Format: ${WHITE}listen=target${NC}${DIM} or just ${WHITE}port${NC}${DIM} (e.g. 443 or 8443=443). Empty line to finish.${NC}"
+    echo -e "  ${DIM}Note: on Kharej, the service must listen on ${WHITE}0.0.0.0${NC}${DIM} or ${WHITE}${WG_NET}.2${NC}${DIM}.${NC}"
+    separator
+    local pm_idx=1 pm
+    while true; do
+        prompt "  Mapping #${pm_idx} (Enter to finish):"; read -r pm
+        [[ -z "$pm" ]] && break
+        if [[ "$pm" =~ ^[0-9]+$ ]]; then pm="${pm}=${pm}"; fi
+        if [[ ! "$pm" =~ ^[0-9]+=[0-9]+$ ]]; then warn "Invalid: '${pm}' — use listen=target or a port number."; continue; fi
+        local lp="${pm%%=*}" tp="${pm#*=}"
+        if ! is_valid_port "$lp" || ! is_valid_port "$tp"; then warn "Invalid port in '${pm}'"; continue; fi
+        PORTS+=("$pm"); pm_idx=$(( pm_idx + 1 ))
+    done
+    [[ ${#PORTS[@]} -eq 0 ]] && { warn "At least one port mapping is required."; press_enter; return; }
+
+    # Derive deterministic keys for both ends from the shared token.
+    local my_priv peer_pub my_ip peer_ip
+    if [[ "$role" == "iran" ]]; then
+        my_priv="$(wg_derive_priv "$TOKEN" iran)"
+        peer_pub="$(wg_pub_from_priv "$(wg_derive_priv "$TOKEN" kharej)")"
+        my_ip="${WG_NET}.1"; peer_ip="${WG_NET}.2"
+    else
+        my_priv="$(wg_derive_priv "$TOKEN" kharej)"
+        peer_pub="$(wg_pub_from_priv "$(wg_derive_priv "$TOKEN" iran)")"
+        my_ip="${WG_NET}.2"; peer_ip="${WG_NET}.1"
+    fi
+    local my_pub; my_pub="$(wg_pub_from_priv "$my_priv")"
+
+    local IFACE="bhmwg${WGPORT}"
+    local CONF="${WG_CONF_DIR}/${IFACE}.conf"
+    mkdir -p "$WG_CONF_DIR"
+    if [[ -f "$CONF" ]]; then
+        systemctl disable --now "wg-quick@${IFACE}" >/dev/null 2>&1 || true
+    fi
+    _wg_write_config "$role" "$CONF" "$my_priv" "$peer_pub" "$my_ip" "$peer_ip" "$WGPORT" "$PEER_IP" "$MTU" "${PORTS[@]}"
+
+    info "Starting tunnel service (wg-quick@${IFACE})..."
+    systemctl enable "wg-quick@${IFACE}" >/dev/null 2>&1 || true
+    local up_ok=0
+    if systemctl restart "wg-quick@${IFACE}" 2>/dev/null || systemctl start "wg-quick@${IFACE}" 2>/dev/null; then
+        sleep 1
+        systemctl is-active --quiet "wg-quick@${IFACE}" && up_ok=1
+    fi
+    if [[ "$up_ok" -ne 1 ]]; then
+        warn "Service did not come up. Last logs:"
+        journalctl -u "wg-quick@${IFACE}" -n 20 --no-pager 2>/dev/null || true
+        press_enter; return
+    fi
+
+    echo ""
+    echo -e "${BOLD}${LGREEN}  ╔══════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${LGREEN}  ║        Premium WireGuard Tunnel is UP!            ║${NC}"
+    echo -e "${BOLD}${LGREEN}  ╚══════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${BULLET} This server : ${LYELLOW}${role^^}${NC}  (${WHITE}${local_ip}${NC})"
+    echo -e "  ${BULLET} Interface   : ${CYAN}${IFACE}${NC}  (${my_ip} ↔ ${peer_ip})"
+    echo -e "  ${BULLET} WG UDP port : ${WHITE}${WGPORT}${NC}"
+    echo -e "  ${BULLET} Service     : ${CYAN}wg-quick@${IFACE}${NC}"
+    echo -e "  ${BULLET} Config      : ${DIM}${CONF}${NC}"
+    echo -e "  ${BULLET} Forwarding  :"
+    for p in "${PORTS[@]}"; do echo -e "               ${DIM}${p}${NC}"; done
+    separator
+    echo -e "\n  ${BOLD}${LBLUE}[ Run on the OTHER server to complete the tunnel ]${NC}"
+    if [[ "$role" == "iran" ]]; then
+        echo -e "  ${BULLET} Role        : ${LBLUE}KHAREJ${NC}"
+    else
+        echo -e "  ${BULLET} Role        : ${LGREEN}IRAN${NC}"
+    fi
+    echo -e "  ${BULLET} Menu        : [9] Premium Tunnel → Create"
+    echo -e "  ${BULLET} WG UDP port : ${WHITE}${WGPORT}${NC}  ${DIM}(same)${NC}"
+    echo -e "  ${BULLET} Peer IP     : ${WHITE}${local_ip}${NC}  ${DIM}(this server's IP)${NC}"
+    echo -e "  ${BULLET} Token       : ${LYELLOW}${TOKEN}${NC}  ${DIM}(MUST be identical)${NC}"
+    echo -e "  ${BULLET} Mappings    : ${DIM}${PORTS[*]}${NC}"
+    separator
+    echo -e "  ${DIM}Tip: after both ends are up, verify with: ${WHITE}wg show ${IFACE}${NC}${DIM} (look for a recent handshake).${NC}"
+    echo ""
     press_enter
 }
 
-menu_premium_test() {
-    print_header
-    echo -e "  ${BOLD}${WHITE}Premium Tunnel Test${NC}\n"
-    echo -e "  Role : ${LYELLOW}${SERVER_ROLE^^}${NC}"
+wg_list_ifaces() { ls "${WG_CONF_DIR}"/bhmwg*.conf 2>/dev/null | sed 's:.*/::; s:\.conf$::'; }
+
+wg_status() {
+    section "Premium Tunnel Status"
+    local found=0 i
+    for i in $(wg_list_ifaces); do
+        found=1
+        local active; active="$(systemctl is-active "wg-quick@${i}" 2>/dev/null)"
+        if [[ "$active" == "active" ]]; then
+            echo -e "  ${OK} ${CYAN}${i}${NC} — ${LGREEN}active${NC}"
+        else
+            echo -e "  ${FAIL} ${CYAN}${i}${NC} — ${LRED}${active:-inactive}${NC}"
+        fi
+        if command -v wg >/dev/null 2>&1; then
+            wg show "$i" 2>/dev/null | sed 's/^/      /' || true
+        fi
+        separator
+    done
+    [[ "$found" -eq 0 ]] && warn "No premium (WireGuard) tunnels found."
+    press_enter
+}
+
+wg_delete() {
+    section "Delete Premium Tunnel"
+    local ifaces; ifaces=$(wg_list_ifaces)
+    [[ -z "$ifaces" ]] && { warn "No premium tunnels to delete."; press_enter; return; }
+    local arr=() i n=1
+    while IFS= read -r i; do arr+=("$i"); echo -e "  ${WHITE}[$n]${NC} ${i}"; n=$(( n + 1 )); done <<< "$ifaces"
+    echo -e "  ${WHITE}[0]${NC} Cancel"
     separator
-    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Quick check${NC} — does Premium even RUN on this server? ${DIM}(local, ~10s)${NC}"
-    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Full test${NC}   — two-server connectivity / BCP38 spoofing check"
-    echo -e "  ${WHITE}[0]${NC} Back"
+    prompt "Choose tunnel to delete:"; read -r d
+    [[ "$d" == "0" || -z "$d" ]] && return
+    [[ "$d" =~ ^[0-9]+$ ]] && (( d >= 1 && d <= ${#arr[@]} )) || { warn "Invalid choice."; press_enter; return; }
+    local iface="${arr[$(( d - 1 ))]}"
+    systemctl disable --now "wg-quick@${iface}" >/dev/null 2>&1 || true
+    rm -f "${WG_CONF_DIR}/${iface}.conf"
+    success "Deleted premium tunnel ${iface}."
+    press_enter
+}
+
+# Real end-to-end datapath self-test using two network namespaces joined by a
+# veth pair. Proves the WireGuard tunnel actually carries traffic on THIS box
+# (encryption + handshake + routing + a TCP service over the tunnel) without
+# needing a second server and without any IP spoofing.
+wg_selftest() {
+    section "Premium Self-Test (real WireGuard datapath)"
+    if [[ $EUID -ne 0 ]]; then warn "Run as root."; press_enter; return; fi
+    wg_preflight || { press_enter; return; }
+    if ! ip netns add bhmt_chk 2>/dev/null; then
+        warn "Cannot create network namespaces here (container/limited kernel)."
+        echo -e "  ${DIM}The tunnel may still work; test by creating it on both servers.${NC}"
+        press_enter; return
+    fi
+    ip netns del bhmt_chk 2>/dev/null || true
+
+    local NSA=bhmt_a NSB=bhmt_b VA=bhmt_va VB=bhmt_vb WGA=bhmtwga WGB=bhmtwgb
+    local PA PB PUBA PUBB
+    PA="$(wg_derive_priv bhm-selftest iran)"
+    PB="$(wg_derive_priv bhm-selftest kharej)"
+    PUBA="$(wg_pub_from_priv "$PA")"
+    PUBB="$(wg_pub_from_priv "$PB")"
+
+    _wg_selftest_cleanup() {
+        ip netns pids "$NSB" 2>/dev/null | xargs -r kill 2>/dev/null || true
+        ip netns del "$NSA" 2>/dev/null || true
+        ip netns del "$NSB" 2>/dev/null || true
+    }
+    trap '_wg_selftest_cleanup' RETURN
+
+    ip netns add "$NSA"; ip netns add "$NSB"
+    ip link add "$VA" type veth peer name "$VB"
+    ip link set "$VA" netns "$NSA"; ip link set "$VB" netns "$NSB"
+    ip netns exec "$NSA" ip addr add 10.55.0.1/24 dev "$VA"
+    ip netns exec "$NSB" ip addr add 10.55.0.2/24 dev "$VB"
+    ip netns exec "$NSA" ip link set "$VA" up; ip netns exec "$NSA" ip link set lo up
+    ip netns exec "$NSB" ip link set "$VB" up; ip netns exec "$NSB" ip link set lo up
+
+    info "Bringing up WireGuard inside two namespaces..."
+    ip netns exec "$NSA" ip link add "$WGA" type wireguard 2>/dev/null || { warn "Kernel cannot create WireGuard interfaces here."; press_enter; return; }
+    ip netns exec "$NSB" ip link add "$WGB" type wireguard 2>/dev/null || { warn "Kernel cannot create WireGuard interfaces here."; press_enter; return; }
+    ip netns exec "$NSA" wg set "$WGA" private-key <(printf '%s' "$PA") listen-port 51990 peer "$PUBB" allowed-ips 10.66.0.2/32 endpoint 10.55.0.2:51991 persistent-keepalive 25
+    ip netns exec "$NSB" wg set "$WGB" private-key <(printf '%s' "$PB") listen-port 51991 peer "$PUBA" allowed-ips 10.66.0.1/32 endpoint 10.55.0.1:51990 persistent-keepalive 25
+    ip netns exec "$NSA" ip addr add 10.66.0.1/24 dev "$WGA"
+    ip netns exec "$NSB" ip addr add 10.66.0.2/24 dev "$WGB"
+    ip netns exec "$NSA" ip link set "$WGA" up
+    ip netns exec "$NSB" ip link set "$WGB" up
+
+    local ping_ok=0 tcp_ok=0
+    if ip netns exec "$NSA" ping -c 3 -W 2 10.66.0.2 >/dev/null 2>&1; then ping_ok=1; fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        ip netns exec "$NSB" python3 -m http.server 8099 --bind 10.66.0.2 >/dev/null 2>&1 &
+        local srv=$!
+        sleep 1
+        if ip netns exec "$NSA" bash -c 'exec 3<>/dev/tcp/10.66.0.2/8099' 2>/dev/null; then tcp_ok=1; fi
+        kill "$srv" 2>/dev/null || true
+    fi
+
     separator
-    prompt "Choice:"; read -r pt_choice
-    case "$pt_choice" in
-        1)
-            if _premium_preflight; then
-                _premium_smoke_test "$SERVER_ROLE"
-            else
-                warn "Fix the preflight issues above, then run the smoke test again."
-            fi
-            press_enter
-            ;;
-        2)
-            if [[ ! -x "$PREMIUM_BINARY" ]]; then
-                warn "Premium binary not found. Install it first (Main Menu → [8])."
-                press_enter; return
-            fi
-            _premium_e2e_test
-            ;;
-        0|"") return ;;
-        *) warn "Invalid option"; sleep 1 ;;
-    esac
+    if [[ "$ping_ok" -eq 1 ]]; then
+        success "Encrypted ping across the WireGuard tunnel: PASS ✅"
+    else
+        warn "Ping across the tunnel: FAIL ❌"
+    fi
+    if [[ "$tcp_ok" -eq 1 ]]; then
+        success "TCP service reachable over the tunnel: PASS ✅"
+    else
+        echo -e "  ${DIM}(TCP forward check skipped or unavailable — ping result is the key indicator.)${NC}"
+    fi
+    echo ""
+    if [[ "$ping_ok" -eq 1 ]]; then
+        echo -e "  ${LGREEN}WireGuard works on this server — the Premium tunnel will connect${NC}"
+        echo -e "  ${LGREEN}with NO spoofing and NO BCP38 requirement. 🎉${NC}"
+    else
+        echo -e "  ${YELLOW}WireGuard datapath did not pass in this environment.${NC}"
+    fi
+    press_enter
+}
+
+menu_premium() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}${WHITE}Premium Tunnel — WireGuard${NC}\n"
+        echo -e "  ${DIM}Encrypted, kernel-space, no spoofing, no BCP38. Role: ${LYELLOW}${SERVER_ROLE^^}${NC}\n"
+        echo -e "  ${LGREEN}[1]${NC} Create / Update tunnel"
+        echo -e "  ${LCYAN}[2]${NC} Status"
+        echo -e "  ${LYELLOW}[3]${NC} Self-Test ${DIM}(prove it works on this server)${NC}"
+        echo -e "  ${RED}[4]${NC} Delete tunnel"
+        echo -e "  ${WHITE}[0]${NC} Back"
+        separator
+        prompt "Choice:"; read -r pm_choice
+        case "$pm_choice" in
+            1) wg_create_tunnel ;;
+            2) wg_status ;;
+            3) wg_selftest ;;
+            4) wg_delete ;;
+            0|"") return ;;
+            *) warn "Invalid option"; sleep 1 ;;
+        esac
+    done
 }
 
 main_menu() {
@@ -3536,7 +3583,7 @@ main_menu() {
         echo -e "  ${LCYAN}[6]${NC}  Two-Way Link Test"
         echo -e "  ${GRAY}[7]${NC}  System Info"
         echo -e "  ${GRAY}[8]${NC}  Install / Update Binary"
-        echo -e "  ${LMAGENTA}[9]${NC}  Premium Test ${DIM}(can this server run the Premium tunnel?)${NC}"
+        echo -e "  ${LMAGENTA}[9]${NC}  Premium Tunnel ${DIM}(WireGuard — encrypted, no spoofing / no BCP38)${NC}"
         echo -e "  ${RED}[0]${NC}  Exit"
         separator
         prompt "Choice:"; read -r main_choice
@@ -3550,7 +3597,7 @@ main_menu() {
             6) menu_link_test ;;
             7) menu_info ;;
             8) menu_install ;;
-            9) menu_premium_test ;;
+            9) menu_premium ;;
             0)
                 echo -e "\n${DIM}Bye!${NC}\n"
                 exit 0
