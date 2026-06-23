@@ -398,7 +398,32 @@ menu_install() {
             prem_path="${prem_path:-$repo_bin}"
 
             if [[ -z "$prem_path" ]] || [[ ! -f "$prem_path" ]]; then
-                warn "Binary file not found. Please upload 'backhaul_premium' to the server first."
+                warn "Local backhaul_premium binary not found."
+                prompt "Would you like to download it from your GitHub repository? [Y/n]:"; read -r dl_prem
+                if [[ "${dl_prem,,}" != "n" ]]; then
+                    local repo_url="https://raw.githubusercontent.com/emad1381/BackhaulManager/master/backhaul%20premium/backhaul_premium"
+                    info "Downloading premium binary from GitHub..."
+                    mkdir -p "$(dirname "$PREMIUM_BINARY")"
+                    local dl_success=false
+                    if command -v wget &>/dev/null; then
+                        if wget -q --show-progress --timeout=60 --tries=2 -O "$PREMIUM_BINARY" "$repo_url"; then
+                            dl_success=true
+                        fi
+                    elif command -v curl &>/dev/null; then
+                        if curl -L --progress-bar --connect-timeout 60 --retry 2 -o "$PREMIUM_BINARY" "$repo_url"; then
+                            dl_success=true
+                        fi
+                    fi
+                    if [[ "$dl_success" == "true" ]] && [[ -s "$PREMIUM_BINARY" ]]; then
+                        chmod +x "$PREMIUM_BINARY"
+                        success "Backhaul Premium downloaded and installed to $PREMIUM_BINARY"
+                        press_enter
+                        return
+                    else
+                        rm -f "$PREMIUM_BINARY"
+                        warn "Download failed. Please check internet connection."
+                    fi
+                fi
                 press_enter
                 return
             fi
