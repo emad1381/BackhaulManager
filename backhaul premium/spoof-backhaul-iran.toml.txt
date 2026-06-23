@@ -1,0 +1,42 @@
+[transport]
+type = "tun"
+heartbeat_interval = 10
+heartbeat_timeout = 25
+
+[tun]
+encapsulation = "ipx"
+name = "backhaul"
+local_addr = "10.10.1.1/24"
+remote_addr = "10.10.1.2/24"
+health_port = 1234
+mtu = 1320
+
+[ipx]
+mode = "server"
+profile = "icmp"
+listen_ip = "iran ip"
+dst_ip = "kharej ip"
+spoof_dst_ip = "ip white1"
+spoof_src_ip = "ip white2"
+custom_packet = true
+interface = "ens161"
+
+[security]
+enable_encryption = false
+
+[tuning]
+auto_tuning = true
+tuning_profile = "balanced"
+workers = 0
+channel_size = 10_000
+so_sndbuf = 0
+batch_size = 2048
+
+[logging]
+log_level = "debug"
+
+[ports]
+forwarder = "iptables"
+mapping = [
+    "9090=9090",
+]

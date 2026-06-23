@@ -29,6 +29,7 @@ INFO="${LBLUE}ℹ${NC}"; ARROW="${CYAN}›${NC}"; BULLET="${MAGENTA}•${NC}"
 # ─── Paths & Defaults ────────────────────────────────────────────────────────
 INSTALL_DIR="/etc/backhaul"
 BINARY="/usr/local/bin/backhaul"
+PREMIUM_BINARY="/usr/local/bin/backhaul_premium"
 CERT_DIR="$INSTALL_DIR/certs"
 SERVICE_DIR="/etc/systemd/system"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -49,10 +50,19 @@ require_root() {
 }
 
 check_binary() {
-    if [[ ! -x "$BINARY" ]]; then
-        warn "Backhaul binary not found. Please install it first (Main Menu → Option 7)."
-        press_enter
-        return 1
+    local requested_proto="${1:-}"
+    if [[ "$requested_proto" == "premium" ]]; then
+        if [[ ! -x "$PREMIUM_BINARY" ]]; then
+            warn "Backhaul Premium binary not found. Please install/upload it first (Main Menu → Option 8)."
+            press_enter
+            return 1
+        fi
+    else
+        if [[ ! -x "$BINARY" ]]; then
+            warn "Backhaul binary not found. Please install it first (Main Menu → Option 8)."
+            press_enter
+            return 1
+        fi
     fi
 }
 
@@ -350,6 +360,7 @@ menu_install() {
     echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Mirror URL${NC}  — Enter a custom download URL manually"
     echo -e "  ${WHITE}[3]${NC} ${LCYAN}Local file${NC}  — Use a file already on this server"
     echo -e "            ${DIM}(e.g. /root/backhaul_linux_amd64.tar.gz)${NC}"
+    echo -e "  ${WHITE}[4]${NC} ${LMAGENTA}Premium Binary${NC} — Install from local 'backhaul premium' folder"
     echo -e "  ${WHITE}[0]${NC} Cancel"
     separator
     prompt "Choice:"; read -r dl_choice
@@ -370,6 +381,41 @@ menu_install() {
                 return
             fi
             source_archive="$local_path"
+            ;;
+        4)
+            echo -e "  ${BOLD}${WHITE}Install Backhaul Premium Binary${NC}\n"
+            local repo_bin=""
+            local script_dir; script_dir=$(dirname "$(readlink -f "$0")")
+            if [[ -f "$script_dir/backhaul premium/backhaul_premium" ]]; then
+                repo_bin="$script_dir/backhaul premium/backhaul_premium"
+            elif [[ -f "./backhaul premium/backhaul_premium" ]]; then
+                repo_bin="./backhaul premium/backhaul_premium"
+            elif [[ -f "/root/backhaul-core/backhaul_premium" ]]; then
+                repo_bin="/root/backhaul-core/backhaul_premium"
+            fi
+
+            prompt "Path to backhaul_premium binary [${repo_bin}]:"; read -r prem_path
+            prem_path="${prem_path:-$repo_bin}"
+
+            if [[ -z "$prem_path" ]] || [[ ! -f "$prem_path" ]]; then
+                warn "Binary file not found. Please upload 'backhaul_premium' to the server first."
+                press_enter
+                return
+            fi
+
+            if [[ -x "$PREMIUM_BINARY" ]]; then
+                local ts; ts=$(date +%Y%m%d-%H%M%S)
+                mkdir -p "$BACKUP_DIR"
+                cp "$PREMIUM_BINARY" "$BACKUP_DIR/backhaul_premium.bak.$ts"
+                info "Previous premium binary backed up."
+            fi
+
+            mkdir -p "$(dirname "$PREMIUM_BINARY")"
+            cp "$prem_path" "$PREMIUM_BINARY"
+            chmod +x "$PREMIUM_BINARY"
+            success "Backhaul Premium installed to $PREMIUM_BINARY"
+            press_enter
+            return
             ;;
         0) return ;;
         *) warn "Invalid choice"; return ;;
@@ -498,9 +544,15 @@ show_status() {
     echo -e "\n  ${BOLD}${WHITE}Config Mapping:${NC}"
     while IFS= read -r toml; do
         local transport bind_or_remote ports_count
-        transport=$(grep -m1 'transport' "$toml" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
-        bind_or_remote=$(grep -m1 'bind_addr\|remote_addr' "$toml" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
-        ports_count=$(grep -c '"' <<< "$(grep 'ports\|="' "$toml" 2>/dev/null | grep -v '#')" 2>/dev/null || echo "0")
+        if grep -q '# bhm_transport = premium' "$toml" 2>/dev/null; then
+            transport="premium"
+            bind_or_remote=$(grep -m1 'remote_addr' "$toml" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+            ports_count=$(grep -c '"' <<< "$(grep 'mapping\|="' "$toml" 2>/dev/null | grep -v '#')" 2>/dev/null || echo "0")
+        else
+            transport=$(grep -m1 'transport' "$toml" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+            bind_or_remote=$(grep -m1 'bind_addr\|remote_addr' "$toml" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+            ports_count=$(grep -c '"' <<< "$(grep 'ports\|="' "$toml" 2>/dev/null | grep -v '#')" 2>/dev/null || echo "0")
+        fi
         echo -e "  ${BULLET} ${DIM}$(basename "$toml")${NC} → ${LYELLOW}$transport${NC} @ ${WHITE}$bind_or_remote${NC}"
     done < <(find "$INSTALL_DIR" -maxdepth 1 -name "*.toml" 2>/dev/null | sort)
 
@@ -824,6 +876,82 @@ _ask_advanced_kharej() {
 #   mss, so_*   : TCP and TCPMUX only (NOT wsmux/wssmux)
 #   edge_ip     : WSMUX and WSSMUX only (client/Kharej)
 
+_write_premium_config() {
+    local config_file="$1" role="$2" host_interface="$3" health_port="$4" mtu="$5"
+    local iran_ip="$6" kharej_ip="$7" spoof_ip1="$8" spoof_ip2="$9"
+    local tun_interface="${10}" tun_local="${11}" tun_remote="${12}"
+    shift 12
+    local ports=("$@")
+
+    {
+        echo "# bhm_transport = premium"
+        echo "[transport]"
+        echo "type = \"tun\""
+        echo "heartbeat_interval = 10"
+        echo "heartbeat_timeout = 25"
+        echo ""
+        echo "[tun]"
+        echo "encapsulation = \"ipx\""
+        echo "name = \"${tun_interface}\""
+        echo "local_addr = \"${tun_local}\""
+        echo "remote_addr = \"${tun_remote}\""
+        echo "health_port = ${health_port}"
+        echo "mtu = ${mtu}"
+        echo ""
+        echo "[ipx]"
+        if [[ "$role" == "iran" ]]; then
+            echo "mode = \"server\""
+            echo "profile = \"icmp\""
+            echo "listen_ip = \"${iran_ip}\""
+            echo "dst_ip = \"${kharej_ip}\""
+            echo "spoof_dst_ip = \"${spoof_ip1}\""
+            echo "spoof_src_ip = \"${spoof_ip2}\""
+        else
+            echo "mode = \"client\""
+            echo "profile = \"icmp\""
+            echo "listen_ip = \"${kharej_ip}\""
+            echo "dst_ip = \"${iran_ip}\""
+            echo "spoof_dst_ip = \"${spoof_ip2}\""
+            echo "spoof_src_ip = \"${spoof_ip1}\""
+        fi
+        echo "custom_packet = true"
+        echo "interface = \"${host_interface}\""
+        echo ""
+        echo "[security]"
+        echo "enable_encryption = false"
+        echo ""
+        echo "[tuning]"
+        echo "auto_tuning = true"
+        echo "tuning_profile = \"balanced\""
+        echo "workers = 0"
+        echo "channel_size = 10000"
+        echo "so_sndbuf = 0"
+        echo "batch_size = 2048"
+        echo ""
+        echo "[logging]"
+        echo "log_level = \"debug\""
+        
+        if [[ "$role" == "iran" ]]; then
+            echo ""
+            echo "[ports]"
+            echo "forwarder = \"iptables\""
+            echo "mapping = ["
+            local last_idx=$(( ${#ports[@]} - 1 ))
+            local idx=0
+            for p in "${ports[@]}"; do
+                local p_e; p_e=$(toml_escape "$p")
+                if [[ $idx -lt $last_idx ]]; then
+                    echo "  \"$p_e\","
+                else
+                    echo "  \"$p_e\""
+                fi
+                idx=$(( idx + 1 ))
+            done
+            echo "]"
+        fi
+    } > "$config_file"
+}
+
 _write_iran_config() {
     local config_file="$1" transport="$2" tunnel_port="$3" token="$4"
     shift 4
@@ -922,7 +1050,6 @@ _write_kharej_config() {
 # ─── CREATE TUNNEL ───────────────────────────────────────────────────────────
 menu_create_tunnel() {
     section "Create New Tunnel"
-    check_binary || return
 
     # Use globally-set SERVER_ROLE (set at startup)
     local ROLE="$SERVER_ROLE"
@@ -941,8 +1068,9 @@ menu_create_tunnel() {
     echo -e "  ${WHITE}[2]${NC} ${LYELLOW}TCPMUX${NC} — TCP + SMUX multiplexing"
     echo -e "  ${WHITE}[3]${NC} ${LYELLOW}WSMUX${NC}  — WebSocket + mux, works through CDN/proxies"
     echo -e "  ${WHITE}[4]${NC} ${LYELLOW}WSSMUX${NC} — WebSocket Secure (TLS) + mux, encrypted ${LGREEN}(recommended)${NC}"
+    echo -e "  ${WHITE}[5]${NC} ${LMAGENTA}PREMIUM${NC} — Premium Spoofing tunnel (TUN/IPX)"
     separator
-    prompt "Choice [1-4]:"; read -r proto_choice
+    prompt "Choice [1-5]:"; read -r proto_choice
 
     local TRANSPORT
     case "$proto_choice" in
@@ -950,177 +1078,270 @@ menu_create_tunnel() {
         2) TRANSPORT="tcpmux" ;;
         3) TRANSPORT="wsmux" ;;
         4) TRANSPORT="wssmux" ;;
+        5) TRANSPORT="premium" ;;
         *) warn "Invalid choice"; return ;;
     esac
+
+    check_binary "$TRANSPORT" || return
 
     # ── Step 2: Essential params (always asked) ───────────────────────────────
     echo -e "\n  ${BOLD}${WHITE}Step 2 of 3 — Essential Settings${NC}"
     separator
 
-    local default_tunnel_port
-    case "$TRANSPORT" in
-        tcp)    default_tunnel_port=8443 ;;
-        tcpmux) default_tunnel_port=9443 ;;
-        wsmux)  default_tunnel_port=9643 ;;
-        wssmux) default_tunnel_port=9743 ;;
-    esac
-
-    prompt "Tunnel listen/connect port [${default_tunnel_port}]:"; read -r TUNNEL_PORT
-    TUNNEL_PORT="${TUNNEL_PORT:-$default_tunnel_port}"
-    if ! is_valid_port "$TUNNEL_PORT"; then
-        warn "Invalid tunnel port: $TUNNEL_PORT"
-        return
-    fi
-
+    local TUNNEL_PORT=""
     local IRAN_IP=""
-    if [[ "$ROLE" == "iran" ]]; then
-        echo -e "  ${DIM}(Iran server listens — no peer IP needed on server side)${NC}"
-    else
-        prompt "Iran server IP address:"; read -r IRAN_IP
-        [[ -z "$IRAN_IP" ]] && { warn "Iran server IP is required."; return; }
-        if [[ ! "$IRAN_IP" =~ ^[A-Za-z0-9._:-]+$ ]]; then
-            warn "Invalid Iran server address. Use an IP address or domain name."
+    local KHAREJ_IP=""
+    local SPOOF_IP1=""
+    local SPOOF_IP2=""
+    local HOST_INTERFACE=""
+    local TUN_INTERFACE=""
+    local TUN_LOCAL=""
+    local TUN_REMOTE=""
+    local HEALTH_PORT=""
+    local MTU=""
+    local TOKEN=""
+    local PORTS=()
+
+    if [[ "$TRANSPORT" == "premium" ]]; then
+        # Premium Tunnel Settings
+        prompt "Premium Health check port [1234]:"; read -r HEALTH_PORT
+        HEALTH_PORT="${HEALTH_PORT:-1234}"
+        if ! is_valid_port "$HEALTH_PORT"; then
+            warn "Invalid health port: $HEALTH_PORT"
             return
+        fi
+        TUNNEL_PORT="$HEALTH_PORT"
+
+        prompt "Iran Server Public IP:"; read -r IRAN_IP
+        [[ -z "$IRAN_IP" ]] && { warn "Iran Server IP is required."; return; }
+
+        prompt "Kharej Server Public IP:"; read -r KHAREJ_IP
+        [[ -z "$KHAREJ_IP" ]] && { warn "Kharej Server IP is required."; return; }
+
+        local def_white1="185.143.234.3" # soft98.ir
+        prompt "Spoof IP 1 (White IP 1 - e.g. Soft98) [${def_white1}]:"; read -r SPOOF_IP1
+        SPOOF_IP1="${SPOOF_IP1:-$def_white1}"
+
+        local def_white2="94.232.174.155" # varzesh3.com
+        prompt "Spoof IP 2 (White IP 2 - e.g. Varzesh3) [${def_white2}]:"; read -r SPOOF_IP2
+        SPOOF_IP2="${SPOOF_IP2:-$def_white2}"
+
+        local auto_iface; auto_iface=$(ip route show | grep '^default' | awk '{print $5}' | head -n1 || echo "eth0")
+        prompt "Host Network Interface [${auto_iface}]:"; read -r HOST_INTERFACE
+        HOST_INTERFACE="${HOST_INTERFACE:-$auto_iface}"
+
+        prompt "TUN Interface Name [backhaul]:"; read -r TUN_INTERFACE
+        TUN_INTERFACE="${TUN_INTERFACE:-backhaul}"
+
+        if [[ "$ROLE" == "iran" ]]; then
+            prompt "TUN Local IP/Mask [10.10.1.1/24]:"; read -r TUN_LOCAL
+            TUN_LOCAL="${TUN_LOCAL:-10.10.1.1/24}"
+            prompt "TUN Remote IP/Mask [10.10.1.2/24]:"; read -r TUN_REMOTE
+            TUN_REMOTE="${TUN_REMOTE:-10.10.1.2/24}"
+        else
+            prompt "TUN Local IP/Mask [10.10.1.2/24]:"; read -r TUN_LOCAL
+            TUN_LOCAL="${TUN_LOCAL:-10.10.1.2/24}"
+            prompt "TUN Remote IP/Mask [10.10.1.1/24]:"; read -r TUN_REMOTE
+            TUN_REMOTE="${TUN_REMOTE:-10.10.1.1/24}"
+        fi
+
+        prompt "TUN MTU [1320]:"; read -r MTU
+        MTU="${MTU:-1320}"
+
+        if [[ "$ROLE" == "iran" ]]; then
+            echo -e "\n  ${BOLD}${WHITE}Port Forwarding Rules (Premium TUN/IPX)${NC}"
+            echo -e "  ${DIM}Format : ${WHITE}listen_port=target_ip:target_port${NC}"
+            echo -e "  ${DIM}Example: ${WHITE}9090=9090${NC}   ${DIM}(shortcut for 9090=127.0.0.1:9090)${NC}"
+            echo -e "  ${DIM}Empty line to finish.${NC}"
+            separator
+            local pm_idx=1
+            while true; do
+                prompt "  Mapping #${pm_idx} (Enter to finish):"; read -r pm
+                [[ -z "$pm" ]] && break
+                if [[ "$pm" =~ ^[0-9]+$ ]]; then
+                    pm="${pm}=127.0.0.1:${pm}"
+                    echo -e "  ${DIM}  → expanded to: ${WHITE}${pm}${NC}"
+                fi
+                if [[ ! "$pm" =~ ^[0-9]+=.+:[0-9]+$ ]]; then
+                    warn "Invalid format: '${pm}' — use port=ip:port (e.g. 9090=127.0.0.1:9090)"
+                    continue
+                fi
+                PORTS+=("$pm")
+                pm_idx=$(( pm_idx + 1 ))
+            done
+            [[ ${#PORTS[@]} -eq 0 ]] && { warn "At least one port mapping is required on Iran side."; return; }
+        fi
+    else
+        # Standard Tunnel Settings
+        local default_tunnel_port
+        case "$TRANSPORT" in
+            tcp)    default_tunnel_port=8443 ;;
+            tcpmux) default_tunnel_port=9443 ;;
+            wsmux)  default_tunnel_port=9643 ;;
+            wssmux) default_tunnel_port=9743 ;;
+        esac
+
+        prompt "Tunnel listen/connect port [${default_tunnel_port}]:"; read -r TUNNEL_PORT
+        TUNNEL_PORT="${TUNNEL_PORT:-$default_tunnel_port}"
+        if ! is_valid_port "$TUNNEL_PORT"; then
+            warn "Invalid tunnel port: $TUNNEL_PORT"
+            return
+        fi
+
+        if [[ "$ROLE" == "iran" ]]; then
+            echo -e "  ${DIM}(Iran server listens — no peer IP needed on server side)${NC}"
+        else
+            prompt "Iran server IP address:"; read -r IRAN_IP
+            [[ -z "$IRAN_IP" ]] && { warn "Iran server IP is required."; return; }
+            if [[ ! "$IRAN_IP" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+                warn "Invalid Iran server address. Use an IP address or domain name."
+                return
+            fi
+        fi
+
+        local generated_token; generated_token=$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
+            || tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)
+        echo -e "  ${DIM}Generated token: ${LYELLOW}${generated_token}${NC}"
+        echo -e "  ${DIM}Press Enter to use it, or type your own token.${NC}"
+        prompt "Authentication token:"; read -r TOKEN
+        TOKEN="${TOKEN:-$generated_token}"
+        if [[ "$TOKEN" == *$'\n'* ]] || [[ "$TOKEN" == *$'\r'* ]]; then
+            warn "Token must be a single line."
+            return
+        fi
+
+        if [[ "$ROLE" == "iran" ]]; then
+            echo -e "\n  ${BOLD}${WHITE}Port Forwarding Rules${NC}"
+            echo -e "  ${DIM}Format : ${WHITE}listen_port=target_ip:target_port${NC}"
+            echo -e "  ${DIM}Example: ${WHITE}443=127.0.0.1:443${NC}   ${DIM}or${NC}   ${WHITE}9191=127.0.0.1:9191${NC}"
+            echo -e "  ${DIM}Shortcut: just a port number like ${WHITE}443${NC}${DIM} → auto-expands to ${WHITE}443=127.0.0.1:443${NC}"
+            echo -e "  ${DIM}Empty line to finish.${NC}"
+            separator
+            local pm_idx=1
+            while true; do
+                prompt "  Mapping #${pm_idx} (Enter to finish):"; read -r pm
+                [[ -z "$pm" ]] && break
+                if [[ "$pm" =~ ^[0-9]+$ ]]; then
+                    pm="${pm}=127.0.0.1:${pm}"
+                    echo -e "  ${DIM}  → expanded to: ${WHITE}${pm}${NC}"
+                fi
+                if [[ ! "$pm" =~ ^[0-9]+=.+:[0-9]+$ ]]; then
+                    warn "Invalid format: '${pm}' — use port=ip:port (e.g. 443=127.0.0.1:443)"
+                    continue
+                fi
+                local listen_port="${pm%%=*}"
+                local target="${pm#*=}"
+                local target_host="${target%:*}"
+                local target_port="${target##*:}"
+                if ! is_valid_port "$listen_port" || ! is_valid_port "$target_port" || [[ -z "$target_host" ]]; then
+                    warn "Invalid port mapping: '${pm}'"
+                    continue
+                fi
+                if [[ ! "$target_host" =~ ^[A-Za-z0-9._\[\]:-]+$ ]]; then
+                    warn "Invalid target host in mapping: '${target_host}'"
+                    continue
+                fi
+                PORTS+=("$pm")
+                pm_idx=$(( pm_idx + 1 ))
+            done
+            [[ ${#PORTS[@]} -eq 0 ]] && { warn "At least one port mapping is required on Iran side."; return; }
         fi
     fi
 
-    local generated_token; generated_token=$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
-        || tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)
-    echo -e "  ${DIM}Generated token: ${LYELLOW}${generated_token}${NC}"
-    echo -e "  ${DIM}Press Enter to use it, or type your own token.${NC}"
-    prompt "Authentication token:"; read -r TOKEN
-    TOKEN="${TOKEN:-$generated_token}"
-    if [[ "$TOKEN" == *$'\n'* ]] || [[ "$TOKEN" == *$'\r'* ]]; then
-        warn "Token must be a single line."
-        return
-    fi
-
-    # Port mappings (Iran/Server side only)
-    local PORTS=()
-    if [[ "$ROLE" == "iran" ]]; then
-        echo -e "\n  ${BOLD}${WHITE}Port Forwarding Rules${NC}"
-        echo -e "  ${DIM}Format : ${WHITE}listen_port=target_ip:target_port${NC}"
-        echo -e "  ${DIM}Example: ${WHITE}443=127.0.0.1:443${NC}   ${DIM}or${NC}   ${WHITE}9191=127.0.0.1:9191${NC}"
-        echo -e "  ${DIM}Shortcut: just a port number like ${WHITE}443${NC}${DIM} → auto-expands to ${WHITE}443=127.0.0.1:443${NC}"
-        echo -e "  ${DIM}Empty line to finish.${NC}"
-        separator
-        local pm_idx=1
-        while true; do
-            prompt "  Mapping #${pm_idx} (Enter to finish):"; read -r pm
-            [[ -z "$pm" ]] && break
-            # Shortcut: if user typed only a port number, expand it
-            if [[ "$pm" =~ ^[0-9]+$ ]]; then
-                pm="${pm}=127.0.0.1:${pm}"
-                echo -e "  ${DIM}  → expanded to: ${WHITE}${pm}${NC}"
-            fi
-            # Validate format: must contain '=' and ':'
-            if [[ ! "$pm" =~ ^[0-9]+=.+:[0-9]+$ ]]; then
-                warn "Invalid format: '${pm}' — use port=ip:port (e.g. 443=127.0.0.1:443)"
-                continue
-            fi
-            local listen_port="${pm%%=*}"
-            local target="${pm#*=}"
-            local target_host="${target%:*}"
-            local target_port="${target##*:}"
-            if ! is_valid_port "$listen_port" || ! is_valid_port "$target_port" || [[ -z "$target_host" ]]; then
-                warn "Invalid port mapping: '${pm}'"
-                continue
-            fi
-            if [[ ! "$target_host" =~ ^[A-Za-z0-9._\[\]:-]+$ ]]; then
-                warn "Invalid target host in mapping: '${target_host}'"
-                continue
-            fi
-            PORTS+=("$pm")
-            pm_idx=$(( pm_idx + 1 ))
-        done
-        [[ ${#PORTS[@]} -eq 0 ]] && { warn "At least one port mapping is required on Iran side."; return; }
-    fi
-
     # ── Step 3: Preset or Advanced ────────────────────────────────────────────
-    # Pick a named performance profile first; it sets the PRESET_* baseline.
-    _choose_profile
-
-    echo -e "\n  ${BOLD}${WHITE}Step 3 of 3 — Tuning Parameters${NC}"
-    separator
-    echo -e "  ${WHITE}[1]${NC} ${LGREEN}Preset${NC}   — Apply the '${PRESET_PROFILE}' profile values automatically"
-    echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Advanced${NC} — Fine-tune every parameter manually ${DIM}(profile values shown in brackets)${NC}"
-    separator
-    prompt "Choice [1/2]:"; read -r mode_choice
-
     # Declare all ADV_ as local to this function — prevents bleed between tunnel creations
     local ADV_KEEPALIVE ADV_NODELAY ADV_HEARTBEAT ADV_CHANNEL_SIZE
     local ADV_MUX_CON ADV_MUX_VERSION ADV_MUX_FRAMESIZE ADV_MUX_RECVBUF ADV_MUX_STREAMBUF
     local ADV_LOG_LEVEL ADV_MSS ADV_SO_RCVBUF ADV_SO_SNDBUF ADV_SNIFFER ADV_WEB_PORT
     local ADV_CONN_POOL ADV_AGGRESSIVE_POOL ADV_DIAL_TIMEOUT ADV_RETRY_INTERVAL
 
-    # Initialize with preset values (used by both preset & advanced modes)
-    local _log_level_default
-    if [[ "$ROLE" == "iran" ]]; then
-        _log_level_default=$([[ "$TRANSPORT" == "tcp" ]] && echo "$PRESET_IRAN_LOG_LEVEL_TCP" || echo "$PRESET_IRAN_LOG_LEVEL_MUX")
-        ADV_KEEPALIVE="$PRESET_IRAN_KEEPALIVE"
-        ADV_NODELAY="$PRESET_IRAN_NODELAY"
-        ADV_HEARTBEAT="$PRESET_IRAN_HEARTBEAT"
-        ADV_CHANNEL_SIZE="$PRESET_IRAN_CHANNEL_SIZE"
-        ADV_MUX_CON="$PRESET_IRAN_MUX_CON"
-        ADV_MUX_VERSION="$PRESET_IRAN_MUX_VERSION"
-        ADV_MUX_FRAMESIZE="$PRESET_IRAN_MUX_FRAMESIZE"
-        ADV_MUX_RECVBUF="$PRESET_IRAN_MUX_RECVBUF"
-        ADV_MUX_STREAMBUF="$PRESET_IRAN_MUX_STREAMBUF"
-        ADV_LOG_LEVEL="$_log_level_default"
-        ADV_MSS="$PRESET_IRAN_MSS"
-        ADV_SO_RCVBUF="$PRESET_IRAN_SO_RCVBUF"
-        ADV_SO_SNDBUF="$PRESET_IRAN_SO_SNDBUF"
-        ADV_SNIFFER="$PRESET_IRAN_SNIFFER"
-        ADV_WEB_PORT="$PRESET_IRAN_WEB_PORT"
-        # kharej-only defaults (unused for iran, but must be set for set -u)
-        ADV_CONN_POOL="$PRESET_KHAREJ_CONN_POOL"
-        ADV_AGGRESSIVE_POOL="$PRESET_KHAREJ_AGGRESSIVE_POOL"
-        ADV_DIAL_TIMEOUT="$PRESET_KHAREJ_DIAL_TIMEOUT"
-        ADV_RETRY_INTERVAL="$PRESET_KHAREJ_RETRY_INTERVAL"
-    else
-        _log_level_default=$([[ "$TRANSPORT" == "tcp" ]] && echo "$PRESET_KHAREJ_LOG_LEVEL_TCP" || echo "$PRESET_KHAREJ_LOG_LEVEL_MUX")
-        ADV_CONN_POOL="$PRESET_KHAREJ_CONN_POOL"
-        ADV_AGGRESSIVE_POOL="$PRESET_KHAREJ_AGGRESSIVE_POOL"
-        ADV_KEEPALIVE="$PRESET_KHAREJ_KEEPALIVE"
-        ADV_DIAL_TIMEOUT="$PRESET_KHAREJ_DIAL_TIMEOUT"
-        ADV_RETRY_INTERVAL="$PRESET_KHAREJ_RETRY_INTERVAL"
-        ADV_NODELAY="$PRESET_KHAREJ_NODELAY"
-        ADV_MUX_VERSION="$PRESET_KHAREJ_MUX_VERSION"
-        ADV_MUX_FRAMESIZE="$PRESET_KHAREJ_MUX_FRAMESIZE"
-        ADV_MUX_RECVBUF="$PRESET_KHAREJ_MUX_RECVBUF"
-        ADV_MUX_STREAMBUF="$PRESET_KHAREJ_MUX_STREAMBUF"
-        ADV_LOG_LEVEL="$_log_level_default"
-        ADV_MSS="$PRESET_KHAREJ_MSS"
-        ADV_SO_RCVBUF="$PRESET_KHAREJ_SO_RCVBUF"
-        ADV_SO_SNDBUF="$PRESET_KHAREJ_SO_SNDBUF"
-        ADV_SNIFFER="$PRESET_KHAREJ_SNIFFER"
-        ADV_WEB_PORT="$PRESET_KHAREJ_WEB_PORT"
-        # iran-only defaults (unused for kharej, but must be set for set -u)
-        ADV_HEARTBEAT="$PRESET_IRAN_HEARTBEAT"
-        ADV_CHANNEL_SIZE="$PRESET_IRAN_CHANNEL_SIZE"
-        ADV_MUX_CON="$PRESET_IRAN_MUX_CON"
-    fi
+    if [[ "$TRANSPORT" != "premium" ]]; then
+        # ── Step 3: Preset or Advanced ────────────────────────────────────────────
+        # Pick a named performance profile first; it sets the PRESET_* baseline.
+        _choose_profile
 
-    case "$mode_choice" in
-        1)
-            _show_preset_summary "$ROLE" "$TRANSPORT"
-            echo -e "\n  ${OK} Preset values will be applied."
-            ;;
-        2)
-            echo -e "\n  ${BOLD}${WHITE}Advanced Configuration${NC}"
-            echo -e "  ${DIM}Press Enter on any field to keep the default value shown in [brackets].${NC}"
-            separator
-            if [[ "$ROLE" == "iran" ]]; then
-                _ask_advanced_iran "$TRANSPORT"
-            else
-                _ask_advanced_kharej "$TRANSPORT"
-            fi
-            ;;
-        *)
-            warn "Invalid choice — preset values will be used."
-            _show_preset_summary "$ROLE" "$TRANSPORT"
-            ;;
-    esac
+        echo -e "\n  ${BOLD}${WHITE}Step 3 of 3 — Tuning Parameters${NC}"
+        separator
+        echo -e "  ${WHITE}[1]${NC} ${LGREEN}Preset${NC}   — Apply the '${PRESET_PROFILE}' profile values automatically"
+        echo -e "  ${WHITE}[2]${NC} ${LYELLOW}Advanced${NC} — Fine-tune every parameter manually ${DIM}(profile values shown in brackets)${NC}"
+        separator
+        prompt "Choice [1/2]:"; read -r mode_choice
+
+        # Initialize with preset values (used by both preset & advanced modes)
+        local _log_level_default
+        if [[ "$ROLE" == "iran" ]]; then
+            _log_level_default=$([[ "$TRANSPORT" == "tcp" ]] && echo "$PRESET_IRAN_LOG_LEVEL_TCP" || echo "$PRESET_IRAN_LOG_LEVEL_MUX")
+            ADV_KEEPALIVE="$PRESET_IRAN_KEEPALIVE"
+            ADV_NODELAY="$PRESET_IRAN_NODELAY"
+            ADV_HEARTBEAT="$PRESET_IRAN_HEARTBEAT"
+            ADV_CHANNEL_SIZE="$PRESET_IRAN_CHANNEL_SIZE"
+            ADV_MUX_CON="$PRESET_IRAN_MUX_CON"
+            ADV_MUX_VERSION="$PRESET_IRAN_MUX_VERSION"
+            ADV_MUX_FRAMESIZE="$PRESET_IRAN_MUX_FRAMESIZE"
+            ADV_MUX_RECVBUF="$PRESET_IRAN_MUX_RECVBUF"
+            ADV_MUX_STREAMBUF="$PRESET_IRAN_MUX_STREAMBUF"
+            ADV_LOG_LEVEL="$_log_level_default"
+            ADV_MSS="$PRESET_IRAN_MSS"
+            ADV_SO_RCVBUF="$PRESET_IRAN_SO_RCVBUF"
+            ADV_SO_SNDBUF="$PRESET_IRAN_SO_SNDBUF"
+            ADV_SNIFFER="$PRESET_IRAN_SNIFFER"
+            ADV_WEB_PORT="$PRESET_IRAN_WEB_PORT"
+            # kharej-only defaults (unused for iran, but must be set for set -u)
+            ADV_CONN_POOL="$PRESET_KHAREJ_CONN_POOL"
+            ADV_AGGRESSIVE_POOL="$PRESET_KHAREJ_AGGRESSIVE_POOL"
+            ADV_DIAL_TIMEOUT="$PRESET_KHAREJ_DIAL_TIMEOUT"
+            ADV_RETRY_INTERVAL="$PRESET_KHAREJ_RETRY_INTERVAL"
+        else
+            _log_level_default=$([[ "$TRANSPORT" == "tcp" ]] && echo "$PRESET_KHAREJ_LOG_LEVEL_TCP" || echo "$PRESET_KHAREJ_LOG_LEVEL_MUX")
+            ADV_CONN_POOL="$PRESET_KHAREJ_CONN_POOL"
+            ADV_AGGRESSIVE_POOL="$PRESET_KHAREJ_AGGRESSIVE_POOL"
+            ADV_KEEPALIVE="$PRESET_KHAREJ_KEEPALIVE"
+            ADV_DIAL_TIMEOUT="$PRESET_KHAREJ_DIAL_TIMEOUT"
+            ADV_RETRY_INTERVAL="$PRESET_KHAREJ_RETRY_INTERVAL"
+            ADV_NODELAY="$PRESET_KHAREJ_NODELAY"
+            ADV_MUX_VERSION="$PRESET_KHAREJ_MUX_VERSION"
+            ADV_MUX_FRAMESIZE="$PRESET_KHAREJ_MUX_FRAMESIZE"
+            ADV_MUX_RECVBUF="$PRESET_KHAREJ_MUX_RECVBUF"
+            ADV_MUX_STREAMBUF="$PRESET_KHAREJ_MUX_STREAMBUF"
+            ADV_LOG_LEVEL="$_log_level_default"
+            ADV_MSS="$PRESET_KHAREJ_MSS"
+            ADV_SO_RCVBUF="$PRESET_KHAREJ_SO_RCVBUF"
+            ADV_SO_SNDBUF="$PRESET_KHAREJ_SO_SNDBUF"
+            ADV_SNIFFER="$PRESET_KHAREJ_SNIFFER"
+            ADV_WEB_PORT="$PRESET_KHAREJ_WEB_PORT"
+            # iran-only defaults (unused for kharej, but must be set for set -u)
+            ADV_HEARTBEAT="$PRESET_IRAN_HEARTBEAT"
+            ADV_CHANNEL_SIZE="$PRESET_IRAN_CHANNEL_SIZE"
+            ADV_MUX_CON="$PRESET_IRAN_MUX_CON"
+        fi
+
+        case "$mode_choice" in
+            1)
+                _show_preset_summary "$ROLE" "$TRANSPORT"
+                echo -e "\n  ${OK} Preset values will be applied."
+                ;;
+            2)
+                echo -e "\n  ${BOLD}${WHITE}Advanced Configuration${NC}"
+                echo -e "  ${DIM}Press Enter on any field to keep the default value shown in [brackets].${NC}"
+                separator
+                if [[ "$ROLE" == "iran" ]]; then
+                    _ask_advanced_iran "$TRANSPORT"
+                else
+                    _ask_advanced_kharej "$TRANSPORT"
+                fi
+                ;;
+            *)
+                warn "Invalid choice — preset values will be used."
+                _show_preset_summary "$ROLE" "$TRANSPORT"
+                ;;
+        esac
+    else
+        # Dummy initialization of ADV variables for premium mode to avoid set -u unbound errors
+        ADV_KEEPALIVE=10; ADV_NODELAY=false; ADV_HEARTBEAT=10; ADV_CHANNEL_SIZE=10000
+        ADV_MUX_CON=0; ADV_MUX_VERSION=0; ADV_MUX_FRAMESIZE=0; ADV_MUX_RECVBUF=0; ADV_MUX_STREAMBUF=0
+        ADV_LOG_LEVEL="debug"; ADV_MSS=0; ADV_SO_RCVBUF=0; ADV_SO_SNDBUF=0; ADV_SNIFFER=false; ADV_WEB_PORT=0
+        ADV_CONN_POOL=0; ADV_AGGRESSIVE_POOL=false; ADV_DIAL_TIMEOUT=0; ADV_RETRY_INTERVAL=0
+    fi
 
     # ── Conflict check & write ────────────────────────────────────────────────
     local SVC_NAME="backhaul-${ROLE}-${TRANSPORT}-${TUNNEL_PORT}"
@@ -1145,10 +1366,14 @@ menu_create_tunnel() {
     [[ "$TRANSPORT" == "wssmux" ]] && generate_ssl_cert
 
     # ── Write config & service ────────────────────────────────────────────────
-    if [[ "$ROLE" == "iran" ]]; then
-        _write_iran_config "$CONFIG_FILE" "$TRANSPORT" "$TUNNEL_PORT" "$TOKEN" "${PORTS[@]+"${PORTS[@]}"}"
+    if [[ "$TRANSPORT" == "premium" ]]; then
+        _write_premium_config "$CONFIG_FILE" "$ROLE" "$HOST_INTERFACE" "$HEALTH_PORT" "$MTU" "$IRAN_IP" "$KHAREJ_IP" "$SPOOF_IP1" "$SPOOF_IP2" "$TUN_INTERFACE" "$TUN_LOCAL" "$TUN_REMOTE" "${PORTS[@]+"${PORTS[@]}"}"
     else
-        _write_kharej_config "$CONFIG_FILE" "$TRANSPORT" "$TUNNEL_PORT" "$IRAN_IP" "$TOKEN"
+        if [[ "$ROLE" == "iran" ]]; then
+            _write_iran_config "$CONFIG_FILE" "$TRANSPORT" "$TUNNEL_PORT" "$TOKEN" "${PORTS[@]+"${PORTS[@]}"}"
+        else
+            _write_kharej_config "$CONFIG_FILE" "$TRANSPORT" "$TUNNEL_PORT" "$IRAN_IP" "$TOKEN"
+        fi
     fi
 
     local DESCRIPTION
@@ -1157,7 +1382,11 @@ menu_create_tunnel() {
         tcpmux) DESCRIPTION="Backhaul TCPMUX Tunnel" ;;
         wsmux)  DESCRIPTION="Backhaul WSMUX Tunnel" ;;
         wssmux) DESCRIPTION="Backhaul WSSMUX Tunnel (TLS)" ;;
+        premium) DESCRIPTION="Backhaul Premium Tunnel (TUN/IPX)" ;;
     esac
+
+    local binary_to_use="$BINARY"
+    [[ "$TRANSPORT" == "premium" ]] && binary_to_use="$PREMIUM_BINARY"
 
     cat > "$SERVICE_FILE" << SERVICE
 [Unit]
@@ -1170,7 +1399,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${BINARY} -c ${CONFIG_FILE}
+ExecStart=${binary_to_use} -c ${CONFIG_FILE}
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -1221,8 +1450,15 @@ SERVICE
     echo -e "  ${BULLET} Service     : ${CYAN}${SVC_NAME}${NC}"
     echo -e "  ${BULLET} Status      : ${svc_status}"
     echo -e "  ${BULLET} Config file : ${DIM}${CONFIG_FILE}${NC}"
-    echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}  |  Port: ${WHITE}${TUNNEL_PORT}${NC}"
-    echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
+    if [[ "$TRANSPORT" == "premium" ]]; then
+        echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC} (TUN/IPX)  |  Health Port: ${WHITE}${HEALTH_PORT}${NC}"
+        echo -e "  ${BULLET} Iran IP     : ${WHITE}${IRAN_IP}${NC}  |  Kharej IP: ${WHITE}${KHAREJ_IP}${NC}"
+        echo -e "  ${BULLET} Spoof IP 1  : ${WHITE}${SPOOF_IP1}${NC}  |  Spoof IP 2: ${WHITE}${SPOOF_IP2}${NC}"
+        echo -e "  ${BULLET} Interface   : ${WHITE}${HOST_INTERFACE}${NC}  |  TUN: ${WHITE}${TUN_INTERFACE}${NC} (${TUN_LOCAL} -> ${TUN_REMOTE})"
+    else
+        echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}  |  Port: ${WHITE}${TUNNEL_PORT}${NC}"
+        echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
+    fi
     if [[ "$ROLE" == "iran" ]]; then
         echo -e "  ${BULLET} Forwarding  :"
         for p in "${PORTS[@]}"; do
@@ -1235,24 +1471,52 @@ SERVICE
 
     # What to run on the OTHER server
     echo ""
-    if [[ "$ROLE" == "iran" ]]; then
-        echo -e "  ${BOLD}${LBLUE}[ OTHER SERVER — KHAREJ (run this script there) ]${NC}"
-        echo -e "  ${BULLET} Role        : ${LBLUE}KHAREJ${NC}"
-        echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}"
-        echo -e "  ${BULLET} Iran IP     : ${WHITE}${local_ip}${NC}  port ${WHITE}${TUNNEL_PORT}${NC}"
-        echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
-        echo ""
-        echo -e "  ${DIM}On the Kharej server, run this script → Create Tunnel${NC}"
-        echo -e "  ${DIM}→ Role: KHAREJ | Transport: ${TRANSPORT^^} | Iran IP: ${local_ip}:${TUNNEL_PORT} | Token: ${TOKEN}${NC}"
+    if [[ "$TRANSPORT" == "premium" ]]; then
+        if [[ "$ROLE" == "iran" ]]; then
+            echo -e "  ${BOLD}${LBLUE}[ OTHER SERVER — KHAREJ (run this script there) ]${NC}"
+            echo -e "  ${BULLET} Role        : ${LBLUE}KHAREJ${NC}"
+            echo -e "  ${BULLET} Transport   : ${LYELLOW}PREMIUM${NC}"
+            echo -e "  ${BULLET} Health Port : ${WHITE}${HEALTH_PORT}${NC}"
+            echo -e "  ${BULLET} Iran IP     : ${WHITE}${IRAN_IP}${NC}"
+            echo -e "  ${BULLET} Kharej IP   : ${WHITE}${KHAREJ_IP}${NC}"
+            echo -e "  ${BULLET} Spoof IP 1  : ${WHITE}${SPOOF_IP1}${NC}"
+            echo -e "  ${BULLET} Spoof IP 2  : ${WHITE}${SPOOF_IP2}${NC}"
+            echo ""
+            echo -e "  ${DIM}On the Kharej server, run this script → Create Tunnel${NC}"
+            echo -e "  ${DIM}→ Choose PREMIUM transport and input the exact same parameters above.${NC}"
+        else
+            echo -e "  ${BOLD}${LGREEN}[ OTHER SERVER — IRAN (run this script there) ]${NC}"
+            echo -e "  ${BULLET} Role        : ${LGREEN}IRAN${NC}"
+            echo -e "  ${BULLET} Transport   : ${LYELLOW}PREMIUM${NC}"
+            echo -e "  ${BULLET} Health Port : ${WHITE}${HEALTH_PORT}${NC}"
+            echo -e "  ${BULLET} Iran IP     : ${WHITE}${IRAN_IP}${NC}"
+            echo -e "  ${BULLET} Kharej IP   : ${WHITE}${KHAREJ_IP}${NC}"
+            echo -e "  ${BULLET} Spoof IP 1  : ${WHITE}${SPOOF_IP1}${NC}"
+            echo -e "  ${BULLET} Spoof IP 2  : ${WHITE}${SPOOF_IP2}${NC}"
+            echo ""
+            echo -e "  ${DIM}On the Iran server, run this script → Create Tunnel${NC}"
+            echo -e "  ${DIM}→ Choose PREMIUM transport and input the exact same parameters above.${NC}"
+        fi
     else
-        echo -e "  ${BOLD}${LGREEN}[ OTHER SERVER — IRAN (run this script there) ]${NC}"
-        echo -e "  ${BULLET} Role        : ${LGREEN}IRAN${NC}"
-        echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}"
-        echo -e "  ${BULLET} Listen port : ${WHITE}${TUNNEL_PORT}${NC}"
-        echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
-        echo ""
-        echo -e "  ${DIM}On the Iran server, run this script → Create Tunnel${NC}"
-        echo -e "  ${DIM}→ Role: IRAN | Transport: ${TRANSPORT^^} | Port: ${TUNNEL_PORT} | Token: ${TOKEN}${NC}"
+        if [[ "$ROLE" == "iran" ]]; then
+            echo -e "  ${BOLD}${LBLUE}[ OTHER SERVER — KHAREJ (run this script there) ]${NC}"
+            echo -e "  ${BULLET} Role        : ${LBLUE}KHAREJ${NC}"
+            echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}"
+            echo -e "  ${BULLET} Iran IP     : ${WHITE}${local_ip}${NC}  port ${WHITE}${TUNNEL_PORT}${NC}"
+            echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
+            echo ""
+            echo -e "  ${DIM}On the Kharej server, run this script → Create Tunnel${NC}"
+            echo -e "  ${DIM}→ Role: KHAREJ | Transport: ${TRANSPORT^^} | Iran IP: ${local_ip}:${TUNNEL_PORT} | Token: ${TOKEN}${NC}"
+        else
+            echo -e "  ${BOLD}${LGREEN}[ OTHER SERVER — IRAN (run this script there) ]${NC}"
+            echo -e "  ${BULLET} Role        : ${LGREEN}IRAN${NC}"
+            echo -e "  ${BULLET} Transport   : ${LYELLOW}${TRANSPORT^^}${NC}"
+            echo -e "  ${BULLET} Listen port : ${WHITE}${TUNNEL_PORT}${NC}"
+            echo -e "  ${BULLET} Token       : ${WHITE}${TOKEN}${NC}"
+            echo ""
+            echo -e "  ${DIM}On the Iran server, run this script → Create Tunnel${NC}"
+            echo -e "  ${DIM}→ Role: IRAN | Transport: ${TRANSPORT^^} | Port: ${TUNNEL_PORT} | Token: ${TOKEN}${NC}"
+        fi
     fi
     separator
     echo ""
@@ -1398,8 +1662,13 @@ menu_edit_config() {
     local i=1
     for cfg in "${configs[@]}"; do
         local transport bind_or_remote
-        transport=$(grep -m1 'transport' "$cfg" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
-        bind_or_remote=$(grep -m1 'bind_addr\|remote_addr' "$cfg" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+        if grep -q '# bhm_transport = premium' "$cfg" 2>/dev/null; then
+            transport="premium"
+            bind_or_remote=$(grep -m1 'remote_addr' "$cfg" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+        else
+            transport=$(grep -m1 'transport' "$cfg" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+            bind_or_remote=$(grep -m1 'bind_addr\|remote_addr' "$cfg" 2>/dev/null | awk -F'"' '{print $2}' || echo "?")
+        fi
         echo -e "  ${WHITE}[$i]${NC} ${CYAN}$(basename "$cfg")${NC}  ${DIM}$transport @ $bind_or_remote${NC}"
         i=$(( i + 1 ))
     done
