@@ -1143,11 +1143,11 @@ menu_create_tunnel() {
         prompt "Kharej Server Public IP:"; read -r KHAREJ_IP
         [[ -z "$KHAREJ_IP" ]] && { warn "Kharej Server IP is required."; return; }
 
-        local def_white1="185.143.234.3" # soft98.ir
+        local def_white1="79.127.127.35" # soft98.ir
         prompt "Spoof IP 1 (White IP 1 - e.g. Soft98) [${def_white1}]:"; read -r SPOOF_IP1
         SPOOF_IP1="${SPOOF_IP1:-$def_white1}"
 
-        local def_white2="94.232.174.155" # varzesh3.com
+        local def_white2="185.143.235.201" # varzesh3.com
         prompt "Spoof IP 2 (White IP 2 - e.g. Varzesh3) [${def_white2}]:"; read -r SPOOF_IP2
         SPOOF_IP2="${SPOOF_IP2:-$def_white2}"
 
@@ -1175,8 +1175,8 @@ menu_create_tunnel() {
 
         if [[ "$ROLE" == "iran" ]]; then
             echo -e "\n  ${BOLD}${WHITE}Port Forwarding Rules (Premium TUN/IPX)${NC}"
-            echo -e "  ${DIM}Format : ${WHITE}listen_port=target_ip:target_port${NC}"
-            echo -e "  ${DIM}Example: ${WHITE}9090=9090${NC}   ${DIM}(shortcut for 9090=127.0.0.1:9090)${NC}"
+            echo -e "  ${DIM}Format : ${WHITE}listen_port=target_port${NC}"
+            echo -e "  ${DIM}Example: ${WHITE}7878=7878${NC} or just ${WHITE}7878${NC}"
             echo -e "  ${DIM}Empty line to finish.${NC}"
             separator
             local pm_idx=1
@@ -1184,11 +1184,17 @@ menu_create_tunnel() {
                 prompt "  Mapping #${pm_idx} (Enter to finish):"; read -r pm
                 [[ -z "$pm" ]] && break
                 if [[ "$pm" =~ ^[0-9]+$ ]]; then
-                    pm="${pm}=127.0.0.1:${pm}"
+                    pm="${pm}=${pm}"
                     echo -e "  ${DIM}  → expanded to: ${WHITE}${pm}${NC}"
                 fi
-                if [[ ! "$pm" =~ ^[0-9]+=.+:[0-9]+$ ]]; then
-                    warn "Invalid format: '${pm}' — use port=ip:port (e.g. 9090=127.0.0.1:9090)"
+                if [[ ! "$pm" =~ ^[0-9]+=[0-9]+$ ]]; then
+                    warn "Invalid format: '${pm}' — use port=port (e.g. 7878=7878)"
+                    continue
+                fi
+                local listen_port="${pm%%=*}"
+                local target_port="${pm#*=}"
+                if ! is_valid_port "$listen_port" || ! is_valid_port "$target_port"; then
+                    warn "Invalid port in mapping: '${pm}'"
                     continue
                 fi
                 PORTS+=("$pm")
