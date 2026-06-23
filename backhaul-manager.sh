@@ -3470,10 +3470,22 @@ wg_delete() {
 # veth pair. Proves the WireGuard tunnel actually carries traffic on THIS box
 # (encryption + handshake + routing + a TCP service over the tunnel) without
 # needing a second server and without any IP spoofing.
+_wg_selftest_cleanup() {
+    # Uses fixed literal names so it is always safe to call (never references
+    # unset variables, even under 'set -u').
+    ip netns pids bhmt_b 2>/dev/null | xargs -r kill 2>/dev/null || true
+    ip netns pids bhmt_a 2>/dev/null | xargs -r kill 2>/dev/null || true
+    ip netns del bhmt_a 2>/dev/null || true
+    ip netns del bhmt_b 2>/dev/null || true
+    ip link del bhmt_va 2>/dev/null || true
+}
+
 wg_selftest() {
     section "Premium Self-Test (real WireGuard datapath)"
     if [[ $EUID -ne 0 ]]; then warn "Run as root."; press_enter; return; fi
     wg_preflight || { press_enter; return; }
+    # Clean any leftovers from a previous run first.
+    _wg_selftest_cleanup
     if ! ip netns add bhmt_chk 2>/dev/null; then
         warn "Cannot create network namespaces here (container/limited kernel)."
         echo -e "  ${DIM}The tunnel may still work; test by creating it on both servers.${NC}"
@@ -3488,13 +3500,6 @@ wg_selftest() {
     PUBA="$(wg_pub_from_priv "$PA")"
     PUBB="$(wg_pub_from_priv "$PB")"
 
-    _wg_selftest_cleanup() {
-        ip netns pids "$NSB" 2>/dev/null | xargs -r kill 2>/dev/null || true
-        ip netns del "$NSA" 2>/dev/null || true
-        ip netns del "$NSB" 2>/dev/null || true
-    }
-    trap '_wg_selftest_cleanup' RETURN
-
     ip netns add "$NSA"; ip netns add "$NSB"
     ip link add "$VA" type veth peer name "$VB"
     ip link set "$VA" netns "$NSA"; ip link set "$VB" netns "$NSB"
@@ -3504,8 +3509,11 @@ wg_selftest() {
     ip netns exec "$NSB" ip link set "$VB" up; ip netns exec "$NSB" ip link set lo up
 
     info "Bringing up WireGuard inside two namespaces..."
-    ip netns exec "$NSA" ip link add "$WGA" type wireguard 2>/dev/null || { warn "Kernel cannot create WireGuard interfaces here."; press_enter; return; }
-    ip netns exec "$NSB" ip link add "$WGB" type wireguard 2>/dev/null || { warn "Kernel cannot create WireGuard interfaces here."; press_enter; return; }
+    if ! ip netns exec "$NSA" ip link add "$WGA" type wireguard 2>/dev/null \
+       || ! ip netns exec "$NSB" ip link add "$WGB" type wireguard 2>/dev/null; then
+        warn "Kernel cannot create WireGuard interfaces here."
+        _wg_selftest_cleanup; press_enter; return
+    fi
     ip netns exec "$NSA" wg set "$WGA" private-key <(printf '%s' "$PA") listen-port 51990 peer "$PUBB" allowed-ips 10.66.0.2/32 endpoint 10.55.0.2:51991 persistent-keepalive 25
     ip netns exec "$NSB" wg set "$WGB" private-key <(printf '%s' "$PB") listen-port 51991 peer "$PUBA" allowed-ips 10.66.0.1/32 endpoint 10.55.0.1:51990 persistent-keepalive 25
     ip netns exec "$NSA" ip addr add 10.66.0.1/24 dev "$WGA"
@@ -3542,6 +3550,7 @@ wg_selftest() {
     else
         echo -e "  ${YELLOW}WireGuard datapath did not pass in this environment.${NC}"
     fi
+    _wg_selftest_cleanup
     press_enter
 }
 
