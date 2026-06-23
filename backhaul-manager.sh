@@ -3255,11 +3255,11 @@ wg_preflight() {
         [[ "$quiet" != "quiet" ]] && info "Installing wireguard-tools..."
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y >/dev/null 2>&1
-            DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools openssl iproute2 iptables >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools openssl iproute2 iptables iputils-ping >/dev/null 2>&1
         elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y wireguard-tools openssl iproute iptables >/dev/null 2>&1
+            dnf install -y wireguard-tools openssl iproute iptables iputils >/dev/null 2>&1
         elif command -v yum >/dev/null 2>&1; then
-            yum install -y wireguard-tools openssl iproute iptables >/dev/null 2>&1
+            yum install -y wireguard-tools openssl iproute iptables iputils >/dev/null 2>&1
         fi
     fi
     if ! command -v wg >/dev/null 2>&1; then
@@ -3382,6 +3382,16 @@ wg_create_tunnel() {
         systemctl disable --now "wg-quick@${IFACE}" >/dev/null 2>&1 || true
     fi
     _wg_write_config "$role" "$CONF" "$my_priv" "$peer_pub" "$my_ip" "$peer_ip" "$WGPORT" "$PEER_IP" "$MTU" "${PORTS[@]}"
+
+    # Open the WireGuard UDP port on common host firewalls so the handshake
+    # packets can actually arrive (the #1 cause of "0 B received").
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${WGPORT}/udp" >/dev/null 2>&1 || true
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -C INPUT -p udp --dport "${WGPORT}" -j ACCEPT 2>/dev/null \
+            || iptables -I INPUT -p udp --dport "${WGPORT}" -j ACCEPT 2>/dev/null || true
+    fi
 
     info "Starting tunnel service (wg-quick@${IFACE})..."
     systemctl enable "wg-quick@${IFACE}" >/dev/null 2>&1 || true
