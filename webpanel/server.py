@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.12.0
+Version: 2.12.1
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -2706,12 +2706,24 @@ async function fetchTunnels(force){
       if(t.role==='kharej')groups[key].kharej=t; else groups[key].iran=t;
     });
     const pairs=Object.values(groups);
+    // A manually-created client tunnel still exposes its Iran endpoint in
+    // remote_addr.  Render it read-only when the peer has no SSH record.
+    pairs.forEach(p=>{
+      if(!p.iran&&p.kharej&&p.kharej.bind_addr&&p.kharej.bind_addr!=='?'){
+        p.iran={read_only:true,status:'unmanaged',server_name:'Manual Iran',endpoint:p.kharej.bind_addr,
+          uptime:'Read-only',cpu:'—',memory:'—',service:'',server_id:'',preset:p.kharej.preset||''};
+      }
+      if(!p.kharej&&p.iran){
+        p.kharej={read_only:true,status:'unmanaged',server_name:'Manual Kharej',endpoint:'Remote endpoint unavailable',
+          uptime:'Read-only',cpu:'—',memory:'—',service:'',server_id:'',preset:p.iran.preset||''};
+      }
+    });
     window.TUNNEL_PAIRS=pairs;
     window.TUNNEL_PORTS=tuns.map(t=>t.port).filter(Boolean);
     $('st-tun').textContent=pairs.length;
     $('st-run').textContent=pairs.filter(p=>{
       const ends=[p.iran,p.kharej].filter(Boolean);
-      return ends.length && ends.every(e=>e.status==='running');
+      return ends.length && ends.every(e=>e.status==='running'||e.read_only);
     }).length;
     const g=$('tunnelsGrid');
     if(!pairs.length){g.innerHTML='<div class="empty">No active tunnels. Use \u201cNew Tunnel\u201d to create one.</div>';return;}
@@ -2719,7 +2731,7 @@ async function fetchTunnels(force){
       const cron=(p.iran&&p.iran.cron_active)||(p.kharej&&p.kharej.cron_active);
       const cronInt=(p.iran&&p.iran.cron_interval)||(p.kharej&&p.kharej.cron_interval)||'';
       const ends=[p.iran,p.kharej].filter(Boolean);
-      const alive=ends.length&&ends.every(e=>e.status==='running');
+      const alive=ends.length&&ends.every(e=>e.status==='running'||e.read_only);
       return `<div class="tunnel-pair">
         ${endCard(p.kharej,'kharej')}
         <div class="tp-link">
@@ -2736,6 +2748,11 @@ async function fetchTunnels(force){
 }
 function endCard(t,role){
   if(!t)return `<div class="card tun-end empty-end">No <b>${role}</b> end found for this tunnel</div>`;
+  if(t.read_only)return `<div class="card tun-end stopped">
+    <div class="tun-head"><div><span class="tun-role role-${role}">${role}</span><span class="tun-title">${esc(t.server_name)}</span></div><div class="tun-status"><div class="dot"></div>UNMANAGED</div></div>
+    <div class="tun-info"><div>${esc(t.endpoint||'Endpoint unknown')}</div><div>Read-only</div></div>
+    <div class="srv-actions"><span style="font-size:11px;color:var(--mut);line-height:1.5">Add this server in <b>Servers</b> with SSH credentials to manage it.</span></div>
+  </div>`;
   const cls=t.status==='running'?'running':'stopped';
   return `<div class="card tun-end ${cls}">
     <div class="tun-head">
@@ -2759,11 +2776,12 @@ function endCard(t,role){
 }
 async function delPair(key){
   const p=(window.TUNNEL_PAIRS||[]).find(x=>x.key===key); if(!p)return;
-  if(!confirm('Delete this tunnel? This removes BOTH ends (Iran + Kharej) on port '+p.port+'. Other tunnels are not affected.'))return;
+  const unmanaged=(p.iran&&p.iran.read_only)||(p.kharej&&p.kharej.read_only);
+  if(!confirm(unmanaged?'Delete this local tunnel end? The unmanaged peer will NOT be changed.':'Delete this tunnel? This removes BOTH ends (Iran + Kharej) on port '+p.port+'. Other tunnels are not affected.'))return;
   try{
     const tasks=[];
-    if(p.kharej)tasks.push(api('/api/tunnel/delete',{service:p.kharej.service,server_id:p.kharej.server_id}));
-    if(p.iran)tasks.push(api('/api/tunnel/delete',{service:p.iran.service,server_id:p.iran.server_id}));
+    if(p.kharej&&!p.kharej.read_only)tasks.push(api('/api/tunnel/delete',{service:p.kharej.service,server_id:p.kharej.server_id}));
+    if(p.iran&&!p.iran.read_only)tasks.push(api('/api/tunnel/delete',{service:p.iran.service,server_id:p.iran.server_id}));
     await Promise.all(tasks);
     showToast('Tunnel deleted (both ends)');fetchTunnels();
   }catch(e){showToast(e.message,true)}
@@ -2774,11 +2792,13 @@ function presetChip(p){
   const lbl=known?known.label:(key==='custom'?'Custom':(key||'Custom'));
   const short=(lbl.split('\u2014')[0]||lbl).trim();
   const cls=(known&&key!=='custom')?'':'custom';
+  if((p.iran&&p.iran.read_only)||(p.kharej&&p.kharej.read_only))return `<span class="tp-preset ${cls}" title="Preset changes are disabled until both servers are managed">${esc(short)} · Read-only</span>`;
   return `<button class="tp-preset ${cls}" title="Change performance preset" onclick="openPresetSwitch('${esc(p.key)}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>${esc(short)} <span style="opacity:.7">\u25be</span></button>`;
 }
 var presetSwitchKey='';
 function openPresetSwitch(key){
   const p=(window.TUNNEL_PAIRS||[]).find(x=>x.key===key); if(!p)return;
+  if((p.iran&&p.iran.read_only)||(p.kharej&&p.kharej.read_only)){showToast('Preset changes require both servers to be added to the panel',true);return;}
   presetSwitchKey=key;
   const cur=(p.iran&&p.iran.preset)||(p.kharej&&p.kharej.preset)||'';
   const list=$('preset-switch-list');
@@ -3087,7 +3107,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.12.0")
+    print("  BackhaulManager Web Panel v2.12.1")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}{PANEL_PATH or '/'}")
