@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.6 (resilient remote tunnel status checks)
+Version: 2.11.8 (reliable remote status collection)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -468,9 +468,17 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         r = subprocess.run(full_cmd, capture_output=True, text=True,
                            timeout=timeout, env=run_env)
         out = r.stdout.strip()
+        err = r.stderr.strip()
         # Never echo a leaked password back through stdout/stderr.
         if password and password in out:
             out = out.replace(password, "***")
+        if password and password in err:
+            err = err.replace(password, "***")
+        # The old code discarded stderr completely.  That made a remote sudo
+        # or shell failure look like an empty tunnel list, hiding the actual
+        # cause from both the dashboard and the service journal.
+        if r.returncode and not out:
+            out = err or f"SSH command failed (exit {r.returncode})"
         return out, r.returncode
     except subprocess.TimeoutExpired:
         return "Command timed out", 1
@@ -741,7 +749,11 @@ def _get_tunnels_from_server_uncached(srv):
         return tunnels
 
     # --- REMOTE: single SSH call gathers ALL tunnel data at once ---
-    gather_script = f"""bash -c '
+    # Keep the body separate and quote it once below.  Embedding a multi-line
+    # shell program inside a manually written `bash -c '...'` breaks as soon as
+    # the body contains awk/grep/sed single quotes (which made the Iran status
+    # query fail even though SSH and the service itself were healthy).
+    gather_body = f"""
 SVCS=$(systemctl list-unit-files --type=service 2>/dev/null | awk '{{print $1}}' | grep -E '^backhaul-(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-[0-9]+\\.service$' | sort -u)
 [ -z "$SVCS" ] && exit 0
 for svc in $SVCS; do
@@ -765,8 +777,8 @@ for svc in $SVCS; do
     # Config tokens are quoted TOML values.  cut is deliberately used here
     # instead of a heavily escaped sed expression: the latter could yield an
     # empty id over SSH, causing Iran and Kharej to be rendered as two tunnels.
-    TOKEN=$(grep -E '^token[[:space:]]*=' "$CFG_PATH" 2>/dev/null | head -1 | cut -d '"' -f2)
-    [ -n "$TOKEN" ] && TUNNEL_ID=$(printf '%s' "$TOKEN" | sha256sum 2>/dev/null | cut -c1-16)
+    TOKEN=$(grep -E "^token[[:space:]]*=" "$CFG_PATH" 2>/dev/null | head -1 | cut -d '"' -f2)
+    [ -n "$TOKEN" ] && TUNNEL_ID=$(printf "%s" "$TOKEN" | sha256sum 2>/dev/null | cut -c1-16)
   fi
   CRON_INT=""
   CRON_CONF="{CRON_CONFIG_DIR}/$svc.conf"
@@ -775,11 +787,15 @@ for svc in $SVCS; do
   fi
   echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT|$PRESET|$TUNNEL_ID"
 done
-'"""
+"""
+    gather_script = "bash -c " + shlex.quote(gather_body)
 
     # The dashboard must remain responsive if the remote SSH command stalls.
     # A fresh poll will retry soon; do not hold the browser connection for 30s.
-    out, _ = run_ssh(host, user, key, sudo_cmd(user, gather_script), password=password, port=port, timeout=10)
+    out, rc = run_ssh(host, user, key, sudo_cmd(user, gather_script), password=password, port=port, timeout=10)
+    if rc != 0:
+        print(f"  [PANEL SSH ERROR] Tunnel status query for {srv.get('name', host)}: {out}")
+        return tunnels
     if not out:
         return tunnels
 
@@ -1175,7 +1191,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         before they reach do_GET / do_POST, preventing thread death."""
         try:
             super().handle_one_request()
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+                ssl.SSLEOFError):
             pass
         except Exception:
             pass
@@ -3042,7 +3059,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.11.6")
+    print("  BackhaulManager Web Panel v2.11.7")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")

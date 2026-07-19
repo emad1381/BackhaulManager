@@ -262,7 +262,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.2 (Premium) by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.4 (Premium) by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -322,7 +322,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.2 (Premium) by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.4 (Premium) by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
