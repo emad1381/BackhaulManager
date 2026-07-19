@@ -262,7 +262,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.6 (Premium) by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.7 (Premium) by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -322,7 +322,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.6 (Premium) by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.7 (Premium) by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -1208,7 +1208,12 @@ menu_create_tunnel() {
                     warn "Invalid port mapping: '${pm}'"
                     continue
                 fi
-                if [[ ! "$target_host" =~ ^[A-Za-z0-9._\[\]:-]+$ ]]; then
+                # Explicitly accept local loopbacks first.  Some Bash/regex
+                # combinations mis-handle the old character class and rejected
+                # the documented default 127.0.0.1.
+                if [[ "$target_host" != "127.0.0.1" && "$target_host" != "localhost" && "$target_host" != "::1" && "$target_host" != "[::1]" \
+                    && ! "$target_host" =~ ^[A-Za-z0-9._:-]+$ \
+                    && ! "$target_host" =~ ^\[[0-9A-Fa-f:.]+\]$ ]]; then
                     warn "Invalid target host in mapping: '${target_host}'"
                     continue
                 fi
