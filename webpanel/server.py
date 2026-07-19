@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.5 (reliable tunnel pairing and panel supervision)
+Version: 2.11.6 (resilient remote tunnel status checks)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -437,9 +437,10 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         "-o", "ServerAliveCountMax=2",
         "-o", "GSSAPIAuthentication=no",
         "-o", "Compression=no",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=/tmp/ssh_mux_%h_%p_%r",
-        "-o", "ControlPersist=10m",
+        # Do not reuse an SSH master socket here.  A stale multiplex socket
+        # after a network flap can make every dashboard tunnel poll hang until
+        # the browser/proxy times out, even though a fresh SSH login works.
+        "-o", "ControlMaster=no",
         "-p", str(port)
     ]
     run_env = dict(os.environ)
@@ -776,7 +777,9 @@ for svc in $SVCS; do
 done
 '"""
 
-    out, _ = run_ssh(host, user, key, sudo_cmd(user, gather_script), password=password, port=port, timeout=30)
+    # The dashboard must remain responsive if the remote SSH command stalls.
+    # A fresh poll will retry soon; do not hold the browser connection for 30s.
+    out, _ = run_ssh(host, user, key, sudo_cmd(user, gather_script), password=password, port=port, timeout=10)
     if not out:
         return tunnels
 
@@ -3039,7 +3042,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.11.5")
+    print("  BackhaulManager Web Panel v2.11.6")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")
