@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.4 (exact cron match - safe tunnel delete)
+Version: 2.11.5 (reliable tunnel pairing and panel supervision)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -761,7 +761,10 @@ for svc in $SVCS; do
     BIND=$(grep -E "bind_addr|remote_addr" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
     [ -z "$BIND" ] && BIND="?"
     PRESET=$(grep "^# bhm_preset" "$CFG_PATH" 2>/dev/null | head -1 | cut -d= -f2 | tr -d " ")
-    TOKEN=$(grep -E '^token[[:space:]]*=' "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\\"\\([^\\\"]*\\\)\\\".*/\\1/p")
+    # Config tokens are quoted TOML values.  cut is deliberately used here
+    # instead of a heavily escaped sed expression: the latter could yield an
+    # empty id over SSH, causing Iran and Kharej to be rendered as two tunnels.
+    TOKEN=$(grep -E '^token[[:space:]]*=' "$CFG_PATH" 2>/dev/null | head -1 | cut -d '"' -f2)
     [ -n "$TOKEN" ] && TUNNEL_ID=$(printf '%s' "$TOKEN" | sha256sum 2>/dev/null | cut -c1-16)
   fi
   CRON_INT=""
@@ -1247,6 +1250,14 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/login.html":
             self.send_html(get_login_page())
+            return
+
+        if path == "/favicon.ico":
+            # The UI has no favicon asset; acknowledge the browser request so
+            # it does not pollute the console with a harmless 404 on each load.
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
 
         if path == "/api/auth/status":
@@ -3028,7 +3039,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.9.2")
+    print("  BackhaulManager Web Panel v2.11.5")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}")
