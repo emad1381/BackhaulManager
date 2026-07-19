@@ -474,7 +474,8 @@ show_status() {
 
     # Get all backhaul services
     mapfile -t services < <(systemctl list-unit-files --type=service 2>/dev/null \
-        | grep -o 'backhaul[^ ]*\.service' | sort -u)
+        | awk '{print $1}' \
+        | grep -E '^backhaul-(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-[0-9]+\.service$' | sort -u)
 
     if [[ ${#services[@]} -eq 0 ]]; then
         warn "No Backhaul services found."
@@ -1500,7 +1501,8 @@ list_tunnels() {
     while IFS= read -r svc; do
         _result+=("$svc")
     done < <(systemctl list-unit-files --type=service 2>/dev/null \
-        | grep -o 'backhaul[^ ]*\.service' | sort -u)
+        | awk '{print $1}' \
+        | grep -E '^backhaul-(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-[0-9]+\.service$' | sort -u)
 }
 
 pick_tunnel() {
@@ -2833,6 +2835,39 @@ _install_webpanel_deps() {
     fi
 }
 
+# The panel must always be supervised.  Starting it with nohup (the old default
+# after Install / Update) leaves it permanently down after an OOM, exception or
+# reboot, which looks exactly like a dead panel until someone SSHes in manually.
+_ensure_webpanel_service() {
+    local python_bin
+    python_bin=$(command -v python3 2>/dev/null) || return 1
+    [[ -f "$WEBPANEL_SCRIPT" ]] || return 1
+
+    cat > "$SERVICE_DIR/backhaul-webpanel.service" <<SERVICE
+[Unit]
+Description=BackhaulManager Web Panel
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$WEBPANEL_DIR
+ExecStart=$python_bin $WEBPANEL_SCRIPT
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+LimitNOFILE=65536
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+    systemctl daemon-reload
+    systemctl enable backhaul-webpanel 2>/dev/null
+}
+
 menu_webpanel() {
     while true; do
     clear
@@ -3079,16 +3114,17 @@ SERVICE
                 echo -e "  ${BULLET} Port    : ${CYAN}$WEBPANEL_PORT${NC}"
                 echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
 
-                # Auto-start the panel right after install/update so the user
-                # never has to run [1] Start manually.
-                info "Starting Web Panel automatically..."
-                pkill -9 -f "python3.*server\.py" 2>/dev/null
-                fuser -k -9 "${WEBPANEL_PORT}/tcp" 2>/dev/null
-                sleep 2
+                # Always install the supervisor here.  Previously this branch
+                # used nohup unless the user separately chose option [3], so a
+                # one-off panel crash left the web UI down indefinitely.
+                info "Installing and starting the supervised Web Panel service..."
                 if ! command -v python3 &>/dev/null; then
                     warn "python3 not found. Install python3, then start with option [1]."
-                elif systemctl is-enabled --quiet backhaul-webpanel 2>/dev/null; then
-                    # A boot service exists (option 3) -> use systemd.
+                elif _ensure_webpanel_service; then
+                    # Stop only the legacy manually-started copy of THIS panel;
+                    # do not kill unrelated Python web applications.
+                    systemctl stop backhaul-webpanel 2>/dev/null || true
+                    pkill -f "python3.*${WEBPANEL_SCRIPT}" 2>/dev/null || true
                     systemctl restart backhaul-webpanel
                     sleep 2
                     if systemctl is-active --quiet backhaul-webpanel 2>/dev/null; then
@@ -3097,18 +3133,7 @@ SERVICE
                         warn "Failed to start via systemd. Check: journalctl -u backhaul-webpanel"
                     fi
                 else
-                    # Fresh manual start.
-                    mkdir -p "$INSTALL_DIR" "$WEBPANEL_DIR"
-                    nohup python3 "$WEBPANEL_SCRIPT" > "$WEBPANEL_DIR/panel.log" 2>&1 &
-                    sleep 4
-                    if pgrep -f "python3.*server\.py" >/dev/null 2>&1; then
-                        success "Web Panel is up and running!"
-                        echo ""
-                        echo -e "  ${BOLD}${LGREEN}  Web Panel is LIVE!${NC}"
-                    else
-                        warn "Failed to start Web Panel. Check logs:"
-                        tail -5 "$WEBPANEL_DIR/panel.log" 2>/dev/null
-                    fi
+                    warn "Could not create the Web Panel systemd service. Check systemd permissions."
                 fi
                 echo ""
                 echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"

@@ -192,6 +192,23 @@ def _sshpass_available():
 _INFO_CACHE = {}
 _TUNNEL_CACHE = {}
 _CACHE_TTL = 6  # seconds
+# A browser refreshes both dashboard endpoints every 15 seconds.  Without a
+# refresh lock, overlapping browser requests could each open their own SSH
+# sweep for the same server.  On a slow/unreachable server those sweeps pile up
+# until the panel runs out of threads/file descriptors and stops responding.
+_CACHE_LOCK = threading.RLock()
+_INFO_REFRESH_LOCKS = {}
+_TUNNEL_REFRESH_LOCKS = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
+
+# Keep a flaky remote host from creating an unbounded number of ssh/sshpass
+# children.  This cap applies to all remote actions, not just dashboard polls.
+_SSH_SLOTS = threading.BoundedSemaphore(8)
+
+def _refresh_lock(locks, server_id):
+    """Return the per-server lock used to coalesce a cache refresh."""
+    with _REFRESH_LOCKS_GUARD:
+        return locks.setdefault(server_id or "__unknown__", threading.Lock())
 
 # ============================================================================
 #  TUNNEL PRESETS  (single source of truth, mirrored in backhaul-manager.sh)
@@ -392,12 +409,13 @@ def _run_preset_job(job_id, preset, ends, servers_data):
                                 "preset": preset, "time": time.time()}
 
 def invalidate_cache(server_id=None):
-    if server_id:
-        _INFO_CACHE.pop(server_id, None)
-        _TUNNEL_CACHE.pop(server_id, None)
-    else:
-        _INFO_CACHE.clear()
-        _TUNNEL_CACHE.clear()
+    with _CACHE_LOCK:
+        if server_id:
+            _INFO_CACHE.pop(server_id, None)
+            _TUNNEL_CACHE.pop(server_id, None)
+        else:
+            _INFO_CACHE.clear()
+            _TUNNEL_CACHE.clear()
 
 def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
     if not is_safe_ip_domain(host):
@@ -441,6 +459,10 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
             full_cmd = ["ssh", "-i", key_file] + ssh_opts + [f"{user}@{host}", cmd]
         else:
             full_cmd = ["ssh"] + ssh_opts + [f"{user}@{host}", cmd]
+    # Do not let a dead SSH destination turn every dashboard refresh into more
+    # processes.  Waiting briefly is preferable to exhausting the panel host.
+    if not _SSH_SLOTS.acquire(timeout=min(max(timeout, 1), 30)):
+        return "SSH capacity temporarily exhausted", 1
     try:
         r = subprocess.run(full_cmd, capture_output=True, text=True,
                            timeout=timeout, env=run_env)
@@ -453,6 +475,8 @@ def run_ssh(host, user, key_file, cmd, timeout=30, password="", port=22):
         return "Command timed out", 1
     except Exception as e:
         return str(e), 1
+    finally:
+        _SSH_SLOTS.release()
 
 def is_safe_svc(name):
     if not name:
@@ -512,13 +536,23 @@ def get_binary_version(host=None, user=None, key_file=None, password="", port=22
 def get_server_info(srv):
     sid = srv.get("id", "")
     now = time.time()
-    c = _INFO_CACHE.get(sid)
-    if c and now - c[0] < _CACHE_TTL:
-        return c[1]
-    res = _get_server_info_uncached(srv)
-    if sid:
-        _INFO_CACHE[sid] = (now, res)
-    return res
+    with _CACHE_LOCK:
+        c = _INFO_CACHE.get(sid)
+        if c and now - c[0] < _CACHE_TTL:
+            return c[1]
+    # A second request may have arrived while the first one was doing SSH.
+    # Coalesce it onto that refresh instead of launching another SSH command.
+    with _refresh_lock(_INFO_REFRESH_LOCKS, sid):
+        now = time.time()
+        with _CACHE_LOCK:
+            c = _INFO_CACHE.get(sid)
+            if c and now - c[0] < _CACHE_TTL:
+                return c[1]
+        res = _get_server_info_uncached(srv)
+        if sid:
+            with _CACHE_LOCK:
+                _INFO_CACHE[sid] = (now, res)
+        return res
 
 def _get_server_info_uncached(srv):
     host = srv.get("ip", "127.0.0.1")
@@ -600,13 +634,21 @@ def _get_server_info_uncached(srv):
 def get_tunnels_from_server(srv):
     sid = srv.get("id", "")
     now = time.time()
-    c = _TUNNEL_CACHE.get(sid)
-    if c and now - c[0] < _CACHE_TTL:
-        return c[1]
-    res = _get_tunnels_from_server_uncached(srv)
-    if sid:
-        _TUNNEL_CACHE[sid] = (now, res)
-    return res
+    with _CACHE_LOCK:
+        c = _TUNNEL_CACHE.get(sid)
+        if c and now - c[0] < _CACHE_TTL:
+            return c[1]
+    with _refresh_lock(_TUNNEL_REFRESH_LOCKS, sid):
+        now = time.time()
+        with _CACHE_LOCK:
+            c = _TUNNEL_CACHE.get(sid)
+            if c and now - c[0] < _CACHE_TTL:
+                return c[1]
+        res = _get_tunnels_from_server_uncached(srv)
+        if sid:
+            with _CACHE_LOCK:
+                _TUNNEL_CACHE[sid] = (now, res)
+        return res
 
 def _get_tunnels_from_server_uncached(srv):
     host = srv.get("ip", "127.0.0.1")
@@ -619,7 +661,7 @@ def _get_tunnels_from_server_uncached(srv):
     tunnels = []
 
     if is_local:
-        out, _ = run_cmd("systemctl list-unit-files --type=service 2>/dev/null | grep -o 'backhaul[^ ]*\\.service' | sort -u")
+        out, _ = run_cmd("systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -E '^backhaul-(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-[0-9]+\\.service$' | sort -u")
         if not out:
             return tunnels
 
@@ -642,7 +684,7 @@ def _get_tunnels_from_server_uncached(srv):
                 mem = "—"
             uptime_s = up_out.strip() if up_out else "—"
 
-            transport, bind_addr = "?", "?"
+            transport, bind_addr, tunnel_id = "?", "?", ""
             preset = ""
             config_name = svc.replace("backhaul-", "").replace(".service", "")
             config_path = f"{INSTALL_DIR}/{config_name}.toml"
@@ -657,6 +699,12 @@ def _get_tunnels_from_server_uncached(srv):
                                 transport = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
                             if 'bind_addr' in line or 'remote_addr' in line:
                                 bind_addr = line.split('"')[1] if '"' in line else line.split('=')[1].strip()
+                            if line.strip().startswith('token') and '=' in line:
+                                token_value = line.split('=', 1)[1].strip().strip('"')
+                                if token_value:
+                                    # A stable opaque identifier lets the UI pair both
+                                    # ends even when several tunnels share one port.
+                                    tunnel_id = hashlib.sha256(token_value.encode()).hexdigest()[:16]
                 except:
                     pass
 
@@ -685,14 +733,15 @@ def _get_tunnels_from_server_uncached(srv):
                 "bind_addr": bind_addr,
                 "cron_active": cron_active,
                 "cron_interval": cron_interval,
-                "preset": preset
+                "preset": preset,
+                "tunnel_id": tunnel_id
             })
 
         return tunnels
 
     # --- REMOTE: single SSH call gathers ALL tunnel data at once ---
     gather_script = f"""bash -c '
-SVCS=$(systemctl list-unit-files --type=service 2>/dev/null | grep -o "backhaul[^ ]*\\.service" | sort -u)
+SVCS=$(systemctl list-unit-files --type=service 2>/dev/null | awk '{{print $1}}' | grep -E '^backhaul-(iran|kharej)-(tcp|tcpmux|wsmux|wssmux)-[0-9]+\\.service$' | sort -u)
 [ -z "$SVCS" ] && exit 0
 for svc in $SVCS; do
   STATUS=$(systemctl is-active "$svc" 2>/dev/null)
@@ -705,20 +754,22 @@ for svc in $SVCS; do
   fi
   CFG_NAME=$(echo "$svc" | sed "s/^backhaul-//;s/\\.service$//")
   CFG_PATH="{INSTALL_DIR}/$CFG_NAME.toml"
-  TRANSPORT="?"; BIND="?"; PRESET=""
+  TRANSPORT="?"; BIND="?"; PRESET=""; TUNNEL_ID=""
   if [ -f "$CFG_PATH" ]; then
     TRANSPORT=$(grep "transport" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
     [ -z "$TRANSPORT" ] && TRANSPORT="?"
     BIND=$(grep -E "bind_addr|remote_addr" "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\"\\([^\\"]*\\)\\".*/\\1/p")
     [ -z "$BIND" ] && BIND="?"
     PRESET=$(grep "^# bhm_preset" "$CFG_PATH" 2>/dev/null | head -1 | cut -d= -f2 | tr -d " ")
+    TOKEN=$(grep -E '^token[[:space:]]*=' "$CFG_PATH" 2>/dev/null | head -1 | sed -n "s/.*\\\"\\([^\\\"]*\\\)\\\".*/\\1/p")
+    [ -n "$TOKEN" ] && TUNNEL_ID=$(printf '%s' "$TOKEN" | sha256sum 2>/dev/null | cut -c1-16)
   fi
   CRON_INT=""
   CRON_CONF="{CRON_CONFIG_DIR}/$svc.conf"
   if [ -f "$CRON_CONF" ]; then
     CRON_INT=$(grep "^INTERVAL=" "$CRON_CONF" 2>/dev/null | cut -d= -f2)
   fi
-  echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT|$PRESET"
+  echo "SVC_DATA:$svc|$STATUS|$CPU|$MEM|$UPTIME|$TRANSPORT|$BIND|$CRON_INT|$PRESET|$TUNNEL_ID"
 done
 '"""
 
@@ -730,11 +781,11 @@ done
         line = line.strip()
         if not line.startswith("SVC_DATA:"):
             continue
-        parts = line[9:].split("|", 8)
-        if len(parts) < 9:
-            parts.extend([""] * (9 - len(parts)))
+        parts = line[9:].split("|", 9)
+        if len(parts) < 10:
+            parts.extend([""] * (10 - len(parts)))
 
-        svc, status_raw, cpu_raw, mem_raw, uptime_raw, transport, bind_addr, cron_int, preset = parts
+        svc, status_raw, cpu_raw, mem_raw, uptime_raw, transport, bind_addr, cron_int, preset, tunnel_id = parts
 
         cpu = cpu_raw.strip() if cpu_raw.strip() else "—"
         try:
@@ -761,7 +812,8 @@ done
             "bind_addr": bind_addr,
             "cron_active": cron_active,
             "cron_interval": cron_interval,
-            "preset": preset.strip()
+            "preset": preset.strip(),
+            "tunnel_id": tunnel_id.strip()
         })
 
     return tunnels
@@ -1077,6 +1129,10 @@ class ReuseAddrHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
     allow_reuse_port = True
     block_on_close = False
+    request_queue_size = 32
+    # ThreadingMixIn has no built-in upper bound.  A stalled client or a burst
+    # of dashboard polls otherwise creates one Python thread per request.
+    _request_slots = threading.BoundedSemaphore(32)
 
     def server_bind(self):
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1084,8 +1140,22 @@ class ReuseAddrHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         except (AttributeError, OSError):
             pass
-        self.socket.settimeout(60)
         super().server_bind()
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            # The kernel accept queue absorbs brief bursts.  Once both queues
+            # are full, shed this request rather than letting the panel host
+            # exhaust RAM/file descriptors and take down every active session.
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 class PanelHandler(http.server.BaseHTTPRequestHandler):
@@ -1219,7 +1289,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/servers":
             data = load_servers()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            workers = min(4, max(1, len(data.get("servers", []))))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 result = list(executor.map(get_server_info, data.get("servers", [])))
             self.send_json({"servers": result})
             return
@@ -1231,7 +1302,8 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/tunnels":
             data = load_servers()
             all_tunnels = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            workers = min(4, max(1, len(data.get("servers", []))))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 for tunnels in executor.map(get_tunnels_from_server, data.get("servers", [])):
                     all_tunnels.extend(tunnels)
             self.send_json({"tunnels": all_tunnels})
@@ -2562,14 +2634,16 @@ async function fetchTunnels(force){
   try{
     const d=await api('/api/tunnels'); if(!d)return;
     const tuns=d.tunnels||[];
-    // Group the two ends (iran + kharej) of a tunnel into one pair, keyed by
-    // transport+port, so the dashboard shows one tunnel = one row.
+    // Group the two ends by the opaque token digest.  Port alone is not a
+    // tunnel identifier: older installs commonly created several tunnels on
+    // 9743, which made the old transport+port key combine unrelated ends and
+    // report a healthy tunnel as disconnected.
     const groups={};
     tuns.forEach(t=>{
       const name=t.service.replace('backhaul-','').replace('.service','');
       const m=name.match(/^(iran|kharej)-(.+)-([0-9]+)$/);
       t.role=m?m[1]:'?'; t.tp=m?m[2]:(t.transport||'?'); t.port=m?m[3]:'?';
-      const key=t.tp+':'+t.port;
+      const key=t.tunnel_id||t.tp+':'+t.port;
       groups[key]=groups[key]||{key:key,transport:t.tp,port:t.port,iran:null,kharej:null};
       if(t.role==='kharej')groups[key].kharej=t; else groups[key].iran=t;
     });
