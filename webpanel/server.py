@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.9 (private panel path and resilient polling)
+Version: 2.12.0
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -3087,7 +3087,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.11.9")
+    print("  BackhaulManager Web Panel v2.12.0")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
     print(f"  URL:      {scheme}://{host}:{port}{PANEL_PATH or '/'}")

@@ -262,7 +262,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.5 (Premium) by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.6 (Premium) by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -322,7 +322,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.5 (Premium) by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.6 (Premium) by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2848,6 +2848,13 @@ _install_webpanel_deps() {
     fi
 }
 
+# Echo the configured private panel path, including its leading slash.
+_panel_path() {
+    if [[ -f "$WEBPANEL_CONFIG" ]] && command -v python3 &>/dev/null; then
+        python3 -c "import json; p=str(json.load(open('$WEBPANEL_CONFIG')).get('path','')).strip('/'); print('/'+p if p else '')" 2>/dev/null
+    fi
+}
+
 # The panel must always be supervised.  Starting it with nohup (the old default
 # after Install / Update) leaves it permanently down after an OOM, exception or
 # reboot, which looks exactly like a dead panel until someone SSHes in manually.
@@ -2895,6 +2902,7 @@ menu_webpanel() {
     local scheme; scheme=$(_panel_scheme)
     local domain; domain=$(_panel_domain)
     local host="${domain:-$ip}"
+    local panel_path; panel_path=$(_panel_path)
     local panel_user; panel_user=$(_panel_user)
 
     # Check if webpanel is already running
@@ -2911,7 +2919,7 @@ menu_webpanel() {
         if [[ -n "$wp_ver" ]]; then
             echo -e "  ${BULLET} Version : ${LBLUE}v${wp_ver}${NC}"
         fi
-        echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${NC}"
+        echo -e "  ${BULLET} URL     : ${CYAN}${scheme}://${host}:${WEBPANEL_PORT}${panel_path}${NC}"
         echo -e "  ${BULLET} Login   : ${LYELLOW}${panel_user} / (your password)${NC}"
         if [[ "$scheme" == "https" ]]; then
             echo -e "  ${BULLET} TLS     : ${LGREEN}enabled${NC}"
