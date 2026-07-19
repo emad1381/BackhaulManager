@@ -262,7 +262,7 @@ ask_server_role() {
     while true; do
         clear
         _print_logo
-        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.4 (Premium) by ${NC}${CYAN}emad1381${NC}"
+        echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.5 (Premium) by ${NC}${CYAN}emad1381${NC}"
         echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Try auto-detect first
@@ -322,7 +322,7 @@ print_header() {
     esac
 
     _print_logo
-    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.4 (Premium) by ${NC}${CYAN}emad1381${NC}"
+    echo -e "  ${DIM}Backhaul Free Tunnel Manager v1.8.5 (Premium) by ${NC}${CYAN}emad1381${NC}"
     echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GRAY}IP   : ${WHITE}$ip${NC}   ${GRAY}Role : ${role_color}${BOLD}$role_label${NC}"
     [[ -x "$BINARY" ]] && {
@@ -2598,17 +2598,18 @@ _panel_user() {
 }
 
 _write_panel_config() {
-    local port="$1" ssl="$2" domain="$3" cert="$4" key="$5"
+    local port="$1" ssl="$2" domain="$3" cert="$4" key="$5" panel_path="$6"
     mkdir -p "$WEBPANEL_DIR"
-    python3 - "$WEBPANEL_CONFIG" "$port" "$ssl" "$domain" "$cert" "$key" <<'PY'
+    python3 - "$WEBPANEL_CONFIG" "$port" "$ssl" "$domain" "$cert" "$key" "$panel_path" <<'PY'
 import json, sys
-path, port, ssl, domain, cert, key = sys.argv[1:7]
+path, port, ssl, domain, cert, key, panel_path = sys.argv[1:8]
 cfg = {
     "port": int(port),
     "ssl_enabled": (ssl == "true"),
     "domain": domain,
     "ssl_cert": cert,
     "ssl_key": key,
+    "path": panel_path,
 }
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
@@ -2754,7 +2755,19 @@ _configure_webpanel() {
         warn "Passwords do not match. Try again."
     done
 
-    # 3) HTTPS / domain
+    # 3) Private URL path. This is an access-obscurity layer, not DDoS
+    # protection; the normal login and HTTPS are still required.
+    local panel_path path_default
+    path_default="panel-$(openssl rand -hex 12 2>/dev/null || date +%s%N)"
+    while true; do
+        prompt "Private panel URL path [${path_default}]:"; read -r panel_path
+        panel_path="${panel_path:-$path_default}"
+        panel_path="${panel_path#/}"; panel_path="${panel_path%/}"
+        if [[ "$panel_path" =~ ^[a-zA-Z0-9_-]{8,80}$ ]]; then break; fi
+        warn "Use 8-80 letters, numbers, _ or - (without /)."
+    done
+
+    # 4) HTTPS / domain
     local ssl_enabled="false" domain="" cert_path="" key_path="" use_domain email use_self
     echo ""
     info "HTTPS protects your login and SSH credentials from being sent in clear text."
@@ -2799,7 +2812,7 @@ _configure_webpanel() {
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
         ufw allow "${port}/tcp" >/dev/null 2>&1 || true
     fi
-    _write_panel_config "$port" "$ssl_enabled" "$domain" "$cert_path" "$key_path"
+    _write_panel_config "$port" "$ssl_enabled" "$domain" "$cert_path" "$key_path" "$panel_path"
     if [[ -n "$set_pass" || "$set_user" != "admin" ]]; then
         _write_panel_settings "$set_user" "$set_pass"
     fi
@@ -2808,7 +2821,7 @@ _configure_webpanel() {
     success "Web Panel configuration saved."
     local scheme; scheme=$(_panel_scheme)
     local host="${domain:-$ip}"
-    echo -e "  ${BULLET} URL  : ${CYAN}${scheme}://${host}:${port}${NC}"
+    echo -e "  ${BULLET} URL  : ${CYAN}${scheme}://${host}:${port}/${panel_path}${NC}"
     [[ "$ssl_enabled" == "true" ]] \
         && echo -e "  ${BULLET} TLS  : ${LGREEN}enabled${NC}" \
         || echo -e "  ${BULLET} TLS  : ${YELLOW}disabled${NC}"

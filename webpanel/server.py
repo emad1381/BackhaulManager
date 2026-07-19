@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 BackhaulManager Web Panel - Multi-Server Edition
-Version: 2.11.8 (reliable remote status collection)
+Version: 2.11.9 (private panel path and resilient polling)
 Author: emad1381
 Manages Iran + Kharej servers from one panel via SSH.
 """
@@ -26,6 +26,7 @@ import threading
 import re as _re
 
 PORT = 54321
+PANEL_PATH = ""
 ADMIN_USER = "admin"
 ADMIN_PASS = "admin"
 INSTALL_DIR = "/etc/backhaul"
@@ -67,7 +68,7 @@ def save_settings(data):
 def load_panel_config():
     """Runtime config (port / TLS) written by the installer (backhaul-manager.sh)."""
     cfg = {"port": PORT, "ssl_enabled": False, "domain": "",
-           "ssl_cert": "", "ssl_key": ""}
+           "ssl_cert": "", "ssl_key": "", "path": ""}
     if os.path.exists(PANEL_CONFIG_FILE):
         try:
             with open(PANEL_CONFIG_FILE) as f:
@@ -75,6 +76,15 @@ def load_panel_config():
         except Exception:
             pass
     return cfg
+
+def normalize_panel_path(value):
+    """Return a safe URL prefix, or an empty string for the legacy root URL."""
+    value = str(value or "").strip().strip("/")
+    if not value:
+        return ""
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{8,80}", value):
+        return ""
+    return "/" + value
 
 def hash_password(pw, salt=None):
     """Return (salt_hex, hash_hex) using PBKDF2-HMAC-SHA256."""
@@ -1206,6 +1216,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
     def send_html(self, html, status=200):
+        html = html.replace("__PANEL_BASE__", json.dumps(PANEL_PATH))
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -1260,6 +1271,14 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
     def _route_request(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if PANEL_PATH:
+            if path == PANEL_PATH:
+                path = "/"
+            elif path.startswith(PANEL_PATH + "/"):
+                path = path[len(PANEL_PATH):]
+            else:
+                self.send_json({"error": "not found"}, 404)
+                return
 
         if path == "/" or path == "/index.html":
             if not self.check_auth():
@@ -1400,6 +1419,12 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
     def _route_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if PANEL_PATH:
+            if path.startswith(PANEL_PATH + "/"):
+                path = path[len(PANEL_PATH):]
+            else:
+                self.send_json({"error": "not found"}, 404)
+                return
 
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
@@ -2077,6 +2102,7 @@ html[data-theme="light"] .aurora{opacity:.5}
 </form>
 
 <script>
+const PANEL_BASE=__PANEL_BASE__;
 const SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
 const MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
 function applyTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('bh_theme',t);document.getElementById('themeBtn').innerHTML=t==='dark'?SUN:MOON;}
@@ -2093,10 +2119,10 @@ form.addEventListener('submit',async(e)=>{
   e.preventDefault();err.style.display='none';
   btn.disabled=true;spin.style.display='inline-block';btnText.textContent='Signing in…';
   try{
-    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch(PANEL_BASE+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({username:document.getElementById('u').value,password:pi.value})});
     const d=await r.json();
-    if(d.success){btnText.textContent='Welcome!';if(d.must_change_password){try{sessionStorage.setItem('bh_must_change','1');}catch(e){}}location.href='/';}
+    if(d.success){btnText.textContent='Welcome!';if(d.must_change_password){try{sessionStorage.setItem('bh_must_change','1');}catch(e){}}location.href=PANEL_BASE+'/';}
     else{throw new Error(d.error||'Invalid credentials');}
   }catch(ex){
     err.textContent='⚠ '+ex.message;err.style.display='flex';
@@ -2557,6 +2583,7 @@ textarea.code:focus{border-color:var(--acc)}
 <div id="toast"></div>
 
 <script>
+const PANEL_BASE=__PANEL_BASE__;
 /* ---------- Theme ---------- */
 const SUN='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
 const MOON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
@@ -2569,8 +2596,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async(path,body=null)=>{
   const opt=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};
-  const r=await fetch(path,opt);
-  if(r.status===401){location.href='/login.html';return null;}
+  const r=await fetch(PANEL_BASE+path,opt);
+  if(r.status===401){location.href=PANEL_BASE+'/login.html';return null;}
   const d=await r.json();
   if(d&&d.success===false&&d.error) throw new Error(d.error);
   return d;
@@ -2705,7 +2732,7 @@ async function fetchTunnels(force){
         ${endCard(p.iran,'iran')}
       </div>`;
     }).join('');
-  }catch(e){showToast(e.message,true)}
+  }catch(e){if(force)showToast(e.message,true)}
 }
 function endCard(t,role){
   if(!t)return `<div class="card tun-end empty-end">No <b>${role}</b> end found for this tunnel</div>`;
@@ -2780,7 +2807,7 @@ async function applyPreset(){
     for(let i=0;i<40 && !done;i++){
       await new Promise(s=>setTimeout(s,1500));
       try{
-        const st=await fetch('/api/tunnel/preset-status?job='+encodeURIComponent(job),{cache:'no-store'}).then(x=>x.json());
+        const st=await fetch(PANEL_BASE+'/api/tunnel/preset-status?job='+encodeURIComponent(job),{cache:'no-store'}).then(x=>x.json());
         if(st&&st.done)done=st;
       }catch(e){/* transient during restart \u2014 keep polling */}
     }
@@ -2923,7 +2950,7 @@ async function saveSettings(e){
     closeModal('m-settings');showToast('Settings updated · signing out…');setTimeout(()=>location.reload(),1100);}
   catch(ex){showToast(ex.message,true)}
 }
-async function logout(){try{await api('/api/auth/logout',{});}catch(e){}location.href='/login.html';}
+async function logout(){try{await api('/api/auth/logout',{});}catch(e){}location.href=PANEL_BASE+'/login.html';}
 
 /* ---------- Presets ---------- */
 var PRESETS={},PHELP={};
@@ -3030,6 +3057,7 @@ if __name__ == "__main__":
     os.makedirs(PANEL_DIR, exist_ok=True)
 
     cfg = load_panel_config()
+    PANEL_PATH = normalize_panel_path(os.environ.get("PANEL_PATH", cfg.get("path", "")))
     # Port: env override > config file > built-in default.
     try:
         port = int(os.environ.get("PANEL_PORT", cfg.get("port", PORT)))
@@ -3059,10 +3087,10 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     host = cfg.get("domain") or local_ip
     print("")
-    print("  BackhaulManager Web Panel v2.11.7")
+    print("  BackhaulManager Web Panel v2.11.9")
     print("  Multi-Server Edition by emad1381 (hardened + presets)")
     print("")
-    print(f"  URL:      {scheme}://{host}:{port}")
+    print(f"  URL:      {scheme}://{host}:{port}{PANEL_PATH or '/'}")
     if SSL_ON:
         print("  TLS:      enabled")
     else:
